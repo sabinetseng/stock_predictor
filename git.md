@@ -4,6 +4,46 @@
 
 ---
 
+## ✅ 已完成的設定
+
+- [x] 初始化 git repository (`git init`)
+- [x] 設定 `.gitignore`（排除機密檔案、虛擬環境、模型檔）
+- [x] 設定使用者資訊
+- [x] 完成第一次提交（Initial Commit）
+- [x] 建立本說明檔
+
+---
+
+## 🚀 快速開始
+
+### 第一次使用（新電腦）
+```bash
+# 1. 複製專案
+git clone <倉庫網址>
+
+# 2. 進入專案資料夾
+cd stock_predictor
+
+# 3. 建立虛擬環境
+python -m venv venv
+venv\Scripts\activate
+
+# 4. 安裝套件
+pip install -r requirements.txt
+
+# 5. 設定機密檔案（從 .env.example 複製）
+copy .env.example .env
+# 編輯 .env 填入實際的資料庫密碼、API Key
+
+# 6. 執行資料庫遷移
+python manage.py migrate
+
+# 7. 啟動開發伺服器
+python manage.py runserver
+```
+
+---
+
 ## 📁 專案結構
 
 ```
