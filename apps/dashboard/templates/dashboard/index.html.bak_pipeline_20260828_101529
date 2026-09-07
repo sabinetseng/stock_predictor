@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>台股預測系統</title>
+    <style>
+        /* ===== 設計系統：所有英文與數字使用 Consolas 等寬字型，方便對齊與閱讀 ===== */
+        :root {
+            --bg: #edf0ea; --surface: #ffffff; --border: #dee5da;
+            --text: #1a211b; --muted: #68766a;
+            /* 莫蘭迪綠主色：primary 對白字對比 5.0:1、primary-dark 對 primary-soft 6.2:1，文字清晰 */
+            --primary: #5e7561; --primary-dark: #4a5d4e; --primary-soft: #eef2ec;
+            --green-bg: #edf3ea; --green-tx: #3f5a44; --green-bd: #aec6ae;
+            --red-bg: #fef2f2;  --red-tx: #b91c1c;   --red-bd: #fca5a5;
+            --amber-bg: #fffbeb; --amber-tx: #b45309; --amber-bd: #fcd34d;
+            --radius: 12px;
+            --shadow: 0 1px 2px rgba(36,48,38,.06), 0 6px 18px rgba(36,48,38,.08);
+        }
+        * { box-sizing: border-box; }
+        body, input, select, button, table, td, th, p, label, div, span, code {
+            font-family: "Consolas", "Microsoft JhengHei", "PingFang TC", sans-serif;
+        }
+        body { margin: 0; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.55; }
+
+        /* ===== 頂部品牌列（漸層）＋股票搜尋 ===== */
+        .topbar { background: linear-gradient(120deg,#222b23 0%,#3c4f3f 70%,#5e7561 100%); color:#fff; padding:20px 0; box-shadow: var(--shadow); }
+        .topbar-inner { max-width:1280px; margin:0 auto; padding:0 20px; display:flex; flex-wrap:wrap; gap:16px 24px; align-items:center; justify-content:space-between; }
+        .brand { display:flex; align-items:center; gap:12px; }
+        .brand-mark { font-size:28px; background:rgba(255,255,255,.15); border-radius:10px; width:48px; height:48px; display:inline-flex; align-items:center; justify-content:center; }
+        .topbar h1 { margin:0; font-size:22px; letter-spacing:1px; }
+        .topbar .brand-sub { margin:2px 0 0; font-size:12px; color:rgba(255,255,255,.75); }
+        .search-group { display:flex; flex-wrap:wrap; gap:8px; }
+        .search-group input#stock-code-input { min-width:220px; border:none; box-shadow:0 2px 8px rgba(0,0,0,.25); }
+        .btn-light { background:rgba(255,255,255,.14) !important; border-color:rgba(255,255,255,.35) !important; color:#fff !important; font-weight:600; }
+        .btn-light:hover { background:rgba(255,255,255,.28) !important; }
+
+        /* ===== 卡片版面 ===== */
+        .container { max-width:1280px; margin:0 auto; padding:24px 20px 64px; display:grid; gap:20px; }
+        .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:18px 20px; }
+        .card-title { margin:0 0 10px; font-size:16px; display:flex; align-items:center; gap:8px; }
+        .card-title::before { content:""; width:4px; height:16px; border-radius:2px; background:var(--primary); display:inline-block; }
+        .hint-text { font-size:12.5px; color:var(--muted); margin:6px 0 0; }
+
+        /* ===== 工作流程步驟列 ===== */
+        .workflow { display:flex; flex-wrap:wrap; gap:12px 18px; align-items:stretch; }
+        .workflow .step { display:flex; flex-direction:column; gap:6px; min-width:170px; }
+        .workflow .step small { color:var(--muted); font-size:11.5px; }
+
+        /* ===== 表單元件 ===== */
+        input[type="text"], input[type="date"], input[type="number"], select {
+            padding:8px 10px; border:1px solid var(--border); border-radius:8px;
+            background:#fff; color:var(--text); font-size:13.5px; outline:none;
+            transition:border-color .15s, box-shadow .15s;
+        }
+        input:focus, select:focus { border-color:var(--primary); box-shadow:0 0 0 3px rgba(94,117,97,.18); }
+        button {
+            font-size:13.5px; padding:8px 14px; border-radius:8px; cursor:pointer;
+            border:1px solid var(--border); background:#fff; color:var(--text);
+            transition:all .15s; white-space:nowrap;
+        }
+        button:hover:not(:disabled) { border-color:var(--primary); color:var(--primary-dark); background:var(--primary-soft); transform:translateY(-1px); }
+        button:disabled { opacity:.55; cursor:not-allowed; }
+        .btn-primary { background:var(--primary); border-color:var(--primary); color:#fff; font-weight:700; box-shadow:0 2px 6px rgba(74,93,78,.35); }
+        .btn-primary:hover:not(:disabled) { background:var(--primary-dark); border-color:var(--primary-dark); color:#fff; }
+        .btn-step { background:var(--primary-soft); border-color:#c3cfbf; color:var(--primary-dark); font-weight:600; }
+        .btn-step:hover:not(:disabled) { background:var(--primary); color:#fff; border-color:var(--primary); }
+
+        /* ===== 訓練設定 fieldset：整張卡片樣子 ===== */
+        fieldset#training-config { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:14px 20px 20px; margin:0; }
+        fieldset#training-config legend { font-weight:800; font-size:16px; padding:0 8px; color:var(--text); }
+        fieldset#training-config label { display:inline-flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); vertical-align:top; margin:8px 14px 0 0; min-width:175px; }
+        fieldset#training-config label > input, fieldset#training-config label > select { width:100%; }
+        fieldset#training-config label.checkbox-row { flex-direction:row; align-items:center; gap:6px; min-width:0; font-size:13px; color:var(--text); user-select:none; }
+        fieldset#training-config label.checkbox-row > input { width:auto; }
+        .form-sep { width:100%; height:0; border-top:1px dashed var(--border); margin:12px 0 2px; }
+        .config-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:14px; }
+
+        /* 三組模型超參數：顯示時以格線排列（JS 切換 display:grid / none） */
+        #lightgbm-params.show, #xgboost-params.show, #tft-params.show {
+            display:grid !important; grid-template-columns:repeat(auto-fill,minmax(240px,1fr));
+            gap:2px 18px; margin-top:10px; padding-top:8px; border-top:1px dashed var(--border);
+        }
+        #lightgbm-params[style*="block"], #xgboost-params[style*="block"], #tft-params[style*="block"] {
+            display:grid !important; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:2px 18px;
+        }
+
+        details#training-data-explanation { border:1px dashed var(--border); border-radius:10px; padding:10px 14px; margin-top:14px; background:var(--primary-soft); }
+        details#training-data-explanation summary { cursor:pointer; font-weight:700; color:var(--primary-dark); }
+        details#training-data-explanation p { margin:8px 0 4px; font-size:13px; }
+        details#training-data-explanation li { margin:2px 0; font-size:13px; }
+
+        /* ===== 本次訓練資訊卡 ===== */
+        #training-info-card { display:none; }
+        .info-section { margin-bottom:18px; padding-bottom:14px; border-bottom:1px solid var(--border); }
+        .info-section:last-child { border-bottom:none; margin-bottom:0; padding-bottom:0; }
+        .info-section h3 { font-size:13.5px; font-weight:700; color:var(--primary-dark); margin:0 0 10px; display:flex; align-items:center; gap:6px; }
+        .info-section h3::before { content:""; width:3px; height:14px; border-radius:2px; background:var(--primary); display:inline-block; }
+        .info-config-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:8px; font-size:13px; }
+        .config-item { display:flex; flex-direction:column; gap:2px; }
+        .config-item .config-label { font-size:11.5px; color:var(--muted); }
+        .config-item .config-value { font-size:12.5px; font-weight:600; color:var(--text); }
+        .model-badge { display:inline-block; background:var(--primary-soft); color:var(--primary-dark); border:1px solid var(--border); border-radius:6px; padding:3px 12px; font-size:13px; font-weight:600; }
+        .hyperparam-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:8px; font-size:13px; }
+        .hyperparam-item { display:flex; flex-direction:column; gap:3px; padding:6px 10px; background:#f6f8f4; border-radius:6px; border:1px solid var(--border); }
+        .hyperparam-item .hp-name { font-weight:600; color:var(--primary-dark); font-size:12px; }
+        .hyperparam-item .hp-value { font-size:12.5px; color:var(--text); }
+        .hyperparam-item .hp-desc { font-size:11px; color:var(--muted); line-height:1.3; }
+        .feature-category { margin-bottom:12px; }
+        .feature-category h4 { font-size:11.5px; font-weight:600; color:var(--muted); margin:6px 0 4px; text-transform:uppercase; letter-spacing:0.5px; }
+        .feature-list { list-style:none; padding:0; margin:0; }
+        .feature-item { display:flex; gap:6px; align-items:flex-start; font-size:12px; padding:2px 0; border-bottom:1px solid rgba(0,0,0,0.03); }
+        .feature-item code { font-size:10.5px; color:#888; min-width:170px; font-weight:500; }
+        .feature-item .feat-desc { color:var(--text); flex:1; line-height:1.4; }
+
+        /* ===== 表格美化 ===== */
+        table { border-collapse:collapse; width:100%; margin-top:4px; }
+        th, td { padding:9px 12px; text-align:left; border-bottom:1px solid var(--border); }
+        thead th { background:#eff2ed; color:#39463b; font-size:12.5px; white-space:nowrap; }
+        tbody tr:hover td { background:#f6f8f4; }
+        tbody tr:last-child td { border-bottom:none; }
+        .table-scroll { overflow-x:auto; max-height:480px; overflow-y:auto; border-radius:10px; border:1px solid var(--border); }
+        .status-badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:700; }
+        .status-badge.completed { background:var(--green-bg); color:var(--green-tx); border:1px solid var(--green-bd); }
+        .status-badge.pending, .status-badge.running { background:var(--amber-bg); color:var(--amber-tx); border:1px solid var(--amber-bd); }
+        .status-badge.failed { background:var(--red-bg); color:var(--red-tx); border:1px solid var(--red-bd); }
+        .model-tag { display:inline-block; background:#eff2ed; border:1px solid var(--border); border-radius:6px; padding:1px 8px; font-size:12px; }
+        /* 最新訓練結果摘要卡：長期保留的重訓練／建立訓練完成訊息 */
+        .summary-box { padding:12px 16px; background:#f6f8f4; border:1px dashed var(--border); border-radius:8px; font-size:13.5px; line-height:1.9; color:#1a211b; word-break:break-word; }
+        .pagination-bar { display:flex; gap:12px; align-items:center; font-size:13px; margin-top:10px; flex-wrap:wrap; color:var(--muted); }
+        .pagination-bar button { padding:5px 12px; font-size:12.5px; }
+
+        /* ===== 圖表卡片 ===== */
+        .chart-card > div[id^="chart-"] { height:380px; min-height:300px; }
+        .chart-card p { color:var(--muted); font-size:13px; }
+
+        /* ===== AI 預測結果卡 ===== */
+        #prediction-result-box { display:none; border-left:5px solid var(--primary); }
+        #prediction-result-content p { margin:6px 0; }
+        .recommendation { padding:6px 14px; border-radius:999px; font-weight:bold; display:inline-block; font-size:14px; }
+        .recommendation.buy  { background:var(--green-bg); color:var(--green-tx); border:1px solid var(--green-bd); }
+        .recommendation.sell { background:var(--red-bg); color:var(--red-tx); border:1px solid var(--red-bd); }
+        .recommendation.hold { background:var(--amber-bg); color:var(--amber-tx); border:1px solid var(--amber-bd); }
+        .probability-bar { width:100%; max-width:420px; background:#eef1ec; border-radius:999px; height:14px; margin:6px 0; overflow:hidden; }
+        .probability-bar-fill { height:100%; border-radius:999px; transition:width .6s ease; }
+
+        /* ===== 狀態訊息：右下角 Toast ===== */
+        #status-message {
+            position:fixed; right:20px; bottom:20px; z-index:1000;
+            max-width:520px; padding:12px 16px; border-radius:10px;
+            background:#242c22; color:#fff; font-size:13px;
+            box-shadow:0 8px 24px rgba(30,40,30,.35);
+            opacity:0; visibility:hidden; transform:translateY(8px);
+            transition:opacity .25s, transform .25s, visibility .25s;
+            pointer-events:none;
+        }
+        #status-message.show { opacity:1; visibility:visible; transform:translateY(0); }
+        #status-message.error { background:#7f1d1d; }
+        code { background:#eef1ec; padding:1px 5px; border-radius:4px; font-size:12.5px; }
+    </style>
+</head>
+<body>
+    {% csrf_token %}
+
+    <!-- 頂部品牌列：系統標題＋股票代碼搜尋與導向按鈕 -->
+    <header class="topbar">
+        <div class="topbar-inner">
+            <div class="brand">
+                <span class="brand-mark">📈</span>
+                <div>
+                    <h1>台股預測系統</h1>
+                    <p class="brand-sub">資料同步 · 特徵工程 · 模型訓練 · AI 買點預測</p>
+                </div>
+            </div>
+            <div class="search-group">
+                <input type="text" id="stock-code-input" placeholder="輸入股票代碼，例如 2330">
+                <button id="btn-view-detail" type="button" class="btn-light">📊 查看圖表／詳情</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+
+        <!-- 工作流程順序：資料同步 → 特徵工程 → 標籤建立 → AI預測，一步步照順序按 -->
+        <section class="card">
+            <h2 class="card-title">標準作業流程（由左至右依序執行）</h2>
+            <div class="workflow">
+                <div class="step">
+                    <button id="btn-check-stock-new-data" class="btn-step">1. 同步個股資料</button>
+                    <small>檢查是否有新資料（行情／籌碼／月營收）</small>
+                </div>
+                <div class="step">
+                    <button id="btn-check-fx-new-data" class="btn-step">2. 同步美金匯率</button>
+                    <small>檢查美金是否有新資料（跨市場特徵用）</small>
+                </div>
+                <div class="step">
+                    <button id="btn-build-features" class="btn-step">3. 建立特徵</button>
+                    <small>產生 X 變數（32 個技術／籌碼／總經特徵）</small>
+                </div>
+                <div class="step">
+                    <button id="btn-build-labels" class="btn-step">4. 建立標籤</button>
+                    <small>計算 Y 變數（未來 20 日報酬是否達門檻）</small>
+                </div>
+                <div class="step">
+                    <button id="btn-predict" class="btn-primary">5. 進行 AI 預測</button>
+                    <small>套用最新模型，輸出上漲機率與建議</small>
+                </div>
+            </div>
+        </section>
+
+        <!-- 預測結果說明區塊（JS 顯示後變成卡片） -->
+        <div id="prediction-result-box" class="card">
+            <h2 class="card-title">AI 預測結果</h2>
+            <div id="prediction-result-content"></div>
+            <p class="hint-text">
+                <strong>機率說明：</strong>此機率代表「未來 20 個交易日內，股價上漲超過 3% 的可能性」。
+                例如機率 22.46% 表示模型估計只有 22.46% 的機率會上漲超過 3%，低於 50% 門檻，因此建議「不買入」。
+            </p>
+        </div>
+
+        <!-- 訓練/驗證區間手動設定區塊 -->
+        <!-- 目的：測試模型訓練出來後，是否能套用到未來更長的時間（5年/10年），
+             不是只看單一次切分的結果。可反覆調整區間、多輪比較。 -->
+        <fieldset id="training-config">
+            <legend>訓練 / 驗證區間設定</legend>
+
+            <label>訓練起始日
+                <input type="date" id="train-start-input">
+            </label>
+            <label>訓練結束日
+                <input type="date" id="train-end-input">
+            </label>
+
+            <label>驗證起始日
+                <input type="date" id="validation-start-input">
+            </label>
+            <label>驗證結束日
+                <input type="date" id="validation-end-input">
+            </label>
+            <div style="font-size:0.78em;color:#68766a;margin-top:4px;">日期會在載入時自動以「目前資料的 60/20/20」填入（隨資料成長自動右移），仍可手動覆寫。</div>
+
+            <label style="font-size:0.85em;" title="只使用最近 N 年的資料切分與訓練，視窗隨時間前滑；設 0 代表全部歷史（擴張式）">
+                滾動視窗（年）
+                <input type="number" id="lookback-years-input" min="0" max="10" step="0.5" value="3">
+            </label>
+            <button type="button" id="btn-auto-split" title="Train 前 60%、Val 次 20%，最後 20% 留作盲測">🔄 自動切分（60/20/20）</button>
+            <button type="button" id="btn-walkforward-retrain" class="btn-primary" title="直接以「目前最新資料的 60/20/20」建立並執行訓練，模型永遠學到最新資料">🚀 一鍵重訓練（最新 60/20/20）</button>
+
+            <div class="form-sep"></div>
+
+            <!-- 模型選擇：不同模型可調整的超參數不一樣，選擇後下面的參數輸入框會跟著切換 -->
+            <label>預測模型
+                <select id="model-type-select">
+                    <option value="tft" selected>TFT（Temporal Fusion Transformer，預設）</option>
+                    <option value="lightgbm">LightGBM</option>
+                    <option value="xgboost">XGBoost</option>
+                </select>
+            </label>
+            <label>股票範圍（逗號分隔，留空=資料庫內全部股票）
+                <input type="text" id="stock-codes-input" placeholder="例如 2330,2317，留空代表全部">
+            </label>
+                        <label>標籤版本
+                <select id="label-version-select">
+                    <option value="advanced" selected>進階雙關卡（超額報酬+停損）</option>
+                    <option value="mvp">MVP（Return20 > 3%）</option>
+                </select>
+            </label>
+            <label title="統計上單次訓練結果有抽樣變異，重複多次訓練、取平均±標準差，才知道結果是否穩定可信">
+                重複訓練次數 n_repeats（1~10，統計上建議 >1）
+                <input type="number" id="param-n-repeats" value="1" min="1" max="10">
+            </label>
+            <label class="checkbox-row" title="勾選：驗證區間延伸至資料庫最新日，且訓練完成後用『訓練+驗證』全部資料重新擬合最終模型——模型因此學到最新市場（評估指標仍以原切分誠實計算）">
+                <input type="checkbox" id="include-latest-input" checked>
+                訓練納入最新資料
+            </label>
+
+            <div class="form-sep"></div>
+
+            <!-- LightGBM 專屬參數 -->
+            <div id="lightgbm-params" style="display: none;">
+                <label>樹的數量 n_estimators（10~2000，預設200）
+                    <input type="number" id="param-n-estimators-lgb" value="200" min="10" max="2000">
+                </label>
+                <label>學習率 learning_rate（0.001~1.0，預設0.05）
+                    <input type="number" id="param-learning-rate-lgb" value="0.05" min="0.001" max="1" step="0.001">
+                </label>
+                <label>葉節點數 num_leaves（2~512，預設31，越大越容易overfit）
+                    <input type="number" id="param-num-leaves-lgb" value="31" min="2" max="512">
+                </label>
+                <label>樹的最大深度 max_depth（-1代表不限制，預設-1）
+                    <input type="number" id="param-max-depth-lgb" value="-1" min="-1" max="30">
+                </label>
+                <label title="子抽樣比例：每棵樹只用這個比例的資料列，是讓 n_repeats 重複訓練真正產生變異的關鍵，設1.0會讓不同種子訓練出幾乎一樣的樹">
+                    資料列子抽樣 bagging_fraction（0.1~1.0，預設0.8）
+                    <input type="number" id="param-bagging-fraction-lgb" value="0.8" min="0.1" max="1" step="0.05">
+                </label>
+                <label title="子抽樣比例：每棵樹只用這個比例的特徵欄位">
+                    特徵子抽樣 feature_fraction（0.1~1.0，預設0.8）
+                    <input type="number" id="param-feature-fraction-lgb" value="0.8" min="0.1" max="1" step="0.05">
+                </label>
+            </div>
+
+            <!-- XGBoost 專屬參數，預設隱藏，選 XGBoost 時才顯示 -->
+            <div id="xgboost-params" style="display: none;">
+                <label>樹的數量 n_estimators（10~2000，預設200）
+                    <input type="number" id="param-n-estimators-xgb" value="200" min="10" max="2000">
+                </label>
+                <label>學習率 learning_rate（0.001~1.0，預設0.05）
+                    <input type="number" id="param-learning-rate-xgb" value="0.05" min="0.001" max="1" step="0.001">
+                </label>
+                <label>樹的最大深度 max_depth（1~30，預設6）
+                    <input type="number" id="param-max-depth-xgb" value="6" min="1" max="30">
+                </label>
+                <label title="子抽樣比例：每棵樹只用這個比例的資料列，是讓 n_repeats 重複訓練真正產生變異的關鍵">
+                    資料列子抽樣 subsample（0.1~1.0，預設0.8）
+                    <input type="number" id="param-subsample-xgb" value="0.8" min="0.1" max="1" step="0.05">
+                </label>
+                <label title="子抽樣比例：每棵樹只用這個比例的特徵欄位">
+                    特徵子抽樣 colsample_bytree（0.1~1.0，預設0.8）
+                    <input type="number" id="param-colsample-bytree-xgb" value="0.8" min="0.1" max="1" step="0.05">
+                </label>
+            </div>
+
+            <!-- TFT 專屬參數，預設隱藏，選 TFT 時才顯示 -->
+            <div id="tft-params">
+                <label title="每個訓練樣本＝最近這麼多個交易日的特徵視窗，標籤＝視窗最後一天；愈長愈能看見趨勢，但需要的歷史資料也愈多">
+                    視窗長度 seq_len（5~120 個交易日，預設30）
+                    <input type="number" id="param-seq-len-tft" value="30" min="5" max="120">
+                </label>
+                <label title="模型內部隱藏維度：越大表達力越強但越容易 overfit、CPU 訓練越慢">
+                    隱藏維度 d_model（8~128，預設32）
+                    <input type="number" id="param-d-model-tft" value="32" min="8" max="128">
+                </label>
+                <label title="自注意力的頭數：讓視窗內的天數從多個角度互相關注">
+                    注意力頭數 n_heads（1~8，預設4）
+                    <input type="number" id="param-n-heads-tft" value="4" min="1" max="8">
+                </label>
+                <label title="LSTM 編碼器層數：擷取時序動態的深度">
+                    LSTM 層數 num_layers（1~6，預設2）
+                    <input type="number" id="param-num-layers-tft" value="2" min="1" max="6">
+                </label>
+                <label title="dropout 比例：隨機丟棄神經元避免 overfit，0 表示不丟棄">
+                    Dropout（0~0.5，預設0.1）
+                    <input type="number" id="param-dropout-tft" value="0.1" min="0" max="0.5" step="0.05">
+                </label>
+                <label title="AdamW 優化器的學習率：太大訓練不穩定，太小收斂慢">
+                    學習率 learning_rate（0.001~1.0，預設0.003）
+                    <input type="number" id="param-learning-rate-tft" value="0.003" min="0.001" max="1" step="0.001">
+                </label>
+                <label title="最多訓練幾輪；驗證集 AUC 連續沒進步會提前早停">
+                    訓練輪數 epochs（3~200，預設30）
+                    <input type="number" id="param-epochs-tft" value="30" min="3" max="200">
+                </label>
+                <label title="每次更新權重用多少個視窗樣本">
+                    批次大小 batch_size（16~512，預設128）
+                    <input type="number" id="param-batch-size-tft" value="128" min="16" max="512">
+                </label>
+            </div>
+
+            <!-- 說明這次訓練實際會用到哪些資料/參數，避免使用者搞不清楚模型吃了什麼進去 -->
+            <details id="training-data-explanation">
+                <summary>這次訓練會用到哪些資料與參數？（點擊可收合／展開）</summary>
+                <p><strong>訓練目標（Y）：</strong>Return20（未來20個交易日報酬率）是否超過3%（或進階版的雙關卡條件），0或1的二元分類。</p>
+                <p><strong>特徵（X，共32個）：</strong>基礎12個＋進階籌碼／技術面10個＋跨市場原始值4個＋月營收2個＋ETF折溢價4個（詳見 X_Y_VARIABLE_DEFINITION.md）：</p>
+                <ul>
+                    <li>技術面：MA20/MA60斜率、RSI、MACD</li>
+                    <li>籌碼面：法人買賣超佔比、資券使用率</li>
+                    <li>相對大盤：超額報酬、Beta值</li>
+                    <li>跨市場總經：美元兌台幣變動率、費半變動率、VIX相對水位、VIX變動率</li>
+                    <li>基本面：營收月增率、營收年增率</li>
+                </ul>
+                <p><strong>資料範圍：</strong>依上方「訓練/驗證區間」與「股票範圍」決定，只會用該區間內已經算好特徵與標籤的資料（需先執行 <code>build_features</code> 與 <code>build_labels</code>）。</p>
+                <p><strong>模型與超參數：</strong>依上方「預測模型」選擇，超參數會依選擇的模型顯示對應的輸入框，沒有調整的欄位會用系統預設值。</p>
+                <p><strong>TFT（Temporal Fusion Transformer）：</strong>序列模型，每個樣本是「最近 seq_len 個交易日」的特徵視窗（標籤＝視窗最後一天）。內部以「可變選擇網路（VSN）」自動學習每天該重視哪些特徵、LSTM 擷取時序動態、再用心智圖般的注意力機制讓視窗內任意兩天直接互動。需要 PyTorch（CPU 版即可），訓練時間明顯比樹模型長；驗證 AUC 早停會在學不到東西時提前結束。</p>
+                <p><strong>重複訓練次數（n_repeats）：</strong>單次訓練的 AUC（曲線下面積）/PR-AUC（精確率-召回率曲線下面積）有抽樣變異，不能只看一次的結果。設定 >1 時，系統會用不同亂數種子重複訓練 N 次（訓練/驗證區間固定不變，避免時間序列資料的 look-ahead bias），回報「平均值 ± 標準差」。標準差越小代表這個模型的表現越穩定；如果標準差很大，代表這次的 AUC（曲線下面積）可能只是運氣好，不能代表模型真正的實力。</p>
+            </details>
+
+            <br>
+            <button id="btn-create-training-run" class="btn-primary">＋ 建立訓練紀錄</button>
+        </fieldset>
+
+        <!-- 本次訓練資訊卡：動態顯示訓練設定摘要 + 所選模型的描述、特徵與超參數 -->
+        <!-- 切換「預測模型」下拉選單或修改表單輸入時即時更新，不是只有單一靜態說明 -->
+        <section class="card" id="training-info-card">
+            <h2 class="card-title">📋 本次訓練將用到的資料與參數</h2>
+            <div id="model-info-loading" class="hint-text">載入模型資訊中…</div>
+            <div id="training-info-content" style="display:none;">
+                <!-- 訓練設定摘要 -->
+                <div class="info-section">
+                    <h3>訓練設定摘要</h3>
+                    <div class="info-config-grid" id="info-config-grid">
+                        <!-- JS 動態填充 -->
+                    </div>
+                </div>
+                <!-- 模型資訊 -->
+                <div class="info-section">
+                    <h3>模型資訊</h3>
+                    <div id="info-model-desc">
+                        <!-- JS 動態填充 -->
+                    </div>
+                </div>
+                <!-- 本次訓練的超參數 -->
+                <div class="info-section">
+                    <h3>本次訓練的超參數</h3>
+                    <div class="hyperparam-list" id="info-hyperparams">
+                        <!-- JS 動態填充 -->
+                    </div>
+                </div>
+                <!-- 特徵清單 -->
+                <div class="info-section">
+                    <h3>特徵清單（共 <span id="feature-count">—</span> 個）</h3>
+                    <div id="info-features">
+                        <!-- JS 動態填充 -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 歷史訓練紀錄表格：分頁瀏覽全部歷史，比較不同區間/模型/參數訓練出來的表現，
+             判斷模型是否隨著驗證期拉遠而效果衰退 -->
+        <section class="card">
+            <h2 class="card-title">📚 歷史訓練紀錄</h2>
+            <div class="table-scroll">
+            <table id="training-runs-table">
+            <thead>
+                <tr>
+                    <th>模型版本</th>
+                    <th>模型類型</th>
+                    <th>股票範圍</th>
+                    <th>訓練區間</th>
+                    <th>驗證區間</th>
+                    <th>狀態</th>
+                    <th title="AUC（Area Under the Curve，曲線下面積）：衡量模型區分「會漲」與「不會漲」的能力，0.5=亂猜，1=完美">AUC（曲線下面積）</th>
+                    <th title="PR-AUC（Precision-Recall Area Under the Curve，精確率-召回率曲線下面積）：在類別不平衡時比 AUC 更適合評估買點預測">PR-AUC（精確率-召回率曲線下面積）</th>
+                    <th>超參數</th>
+                </tr>
+            </thead>
+            <tbody id="training-runs-tbody"><!-- 呼叫 /stocks/training-runs/ 帶入資料 --></tbody>
+        </table>
+            </div>
+            <div class="pagination-bar">
+                <button type="button" id="btn-runs-prev">← 上一頁</button>
+                <span id="runs-page-info"></span>
+                <button type="button" id="btn-runs-next">下一頁 →</button>
+                <span>表格分頁可翻閱全部歷史紀錄。</span>
+            </div>
+        </section>
+
+        <!-- 最新訓練結果摘要：重訓練／建立訓練的完成訊息持續顯示在這裡，
+             不像右下角 Toast 幾秒後自動消失；頁面重整時也會自動從 API 重組最新一筆 -->
+        <section class="card" id="training-summary-card">
+            <h2 class="card-title">🧾 最新訓練結果摘要</h2>
+            <div id="training-summary-content" class="summary-box">尚無紀錄：執行「🚀 一鍵重訓練」或「建立訓練紀錄」後，結果會顯示並保留在這裡。</div>
+        </section>
+
+        <!-- 操作結果訊息區：右下角浮出式 Toast（JS 控制） -->
+        <div id="status-message"></div>
+    </div>
+
+    <script>
+        // ---------------------------------------------------------
+        // 共用工具
+        // ---------------------------------------------------------
+
+        // 讀取 Django CSRF cookie，POST 請求需要帶上這個 token 才不會被擋
+        function getCsrfToken() {
+            const match = document.cookie.match(/csrftoken=([^;]+)/);
+            return match ? match[1] : "";
+        }
+
+        // 統一在畫面上顯示狀態訊息（右下角 Toast），避免每個按鈕都彈 alert 干擾操作
+        function showStatus(message, isError = false) {
+            const box = document.getElementById("status-message");
+            box.textContent = message;
+            box.classList.toggle("error", !!isError);
+            box.classList.add("show");
+            if (showStatus._timer) clearTimeout(showStatus._timer);
+            // 成功訊息 6 秒後自動淡出；錯誤訊息停留久一點讓使用者看清楚原因
+            showStatus._timer = setTimeout(() => box.classList.remove("show"), isError ? 15000 : 6000);
+        }
+
+        // 把需要長期保留的訊息（例如重訓練／建立訓練的完成摘要）寫進「最新訓練結果摘要」卡片；
+        // Toast 只會浮現幾秒，這裡寫入的文字會一直留在畫面上供隨時查看
+        function setTrainingSummaryText(text) {
+            const el = document.getElementById("training-summary-content");
+            if (el && text) el.textContent = text;
+        }
+
+        // 按鈕按下去到收到回應之間，把按鈕鎖住並顯示「處理中」，避免使用者以為沒反應而連點
+        async function withButtonLoading(button, loadingText, task) {
+            const originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = loadingText;
+            try {
+                await task();
+            } finally {
+                button.disabled = false;
+                button.textContent = originalText;
+            }
+        }
+
+        function getStockCodeOrWarn() {
+            const stockCode = document.getElementById("stock-code-input").value.trim();
+            if (!stockCode) {
+                showStatus("請先在上面輸入股票代碼", true);
+                return null;
+            }
+            return stockCode;
+        }
+
+        // ---------------------------------------------------------
+        // 「檢查是否有新資料」按鈕：呼叫 apps.stocks 已完成的爬蟲同步 API
+        // ---------------------------------------------------------
+        document.getElementById("btn-check-stock-new-data").addEventListener("click", () => {
+            const stockCode = getStockCodeOrWarn();
+            if (!stockCode) return;
+
+            const button = document.getElementById("btn-check-stock-new-data");
+            withButtonLoading(button, "檢查中...", async () => {
+                showStatus(`正在同步 ${stockCode} 的行情/籌碼/月營收資料...`);
+                try {
+                    const response = await fetch(`/stocks/${stockCode}/check-new-data/`);
+                    const result = await response.json();
+                    showStatus(result.message, !result.success);
+                    console.log("check-new-data 結果:", result);
+                } catch (err) {
+                    showStatus("連線失敗，請確認 Django 伺服器是否正常運作", true);
+                    console.error(err);
+                }
+            });
+        });
+
+        // ---------------------------------------------------------
+        // 「檢查美金是否有新資料」按鈕：呼叫 apps.fx_data 已完成的爬蟲同步 API
+        // ---------------------------------------------------------
+        document.getElementById("btn-check-fx-new-data").addEventListener("click", () => {
+            const button = document.getElementById("btn-check-fx-new-data");
+            withButtonLoading(button, "檢查中...", async () => {
+                showStatus("正在同步美金匯率資料...");
+                try {
+                    const response = await fetch("/fx/check-new-data/");
+                    const result = await response.json();
+                    showStatus(result.message, !result.success);
+                    console.log("fx check-new-data 結果:", result);
+                } catch (err) {
+                    showStatus("連線失敗，請確認 Django 伺服器是否正常運作", true);
+                    console.error(err);
+                }
+            });
+        });
+
+        // ---------------------------------------------------------
+        // 「建立特徵」按鈕：計算日頻特徵 + 月頻特徵，寫入資料庫
+        // 這是模型訓練前必須執行的步驟，訓練時會從 StockFeatureDaily / StockFeatureMonthly 組出特徵矩陣 X
+        // ---------------------------------------------------------
+        document.getElementById("btn-build-features").addEventListener("click", () => {
+            const stockCode = getStockCodeOrWarn();
+            if (!stockCode) return;
+
+            const button = document.getElementById("btn-build-features");
+            withButtonLoading(button, "計算中...", async () => {
+                showStatus(`正在計算 ${stockCode} 的特徵工程...`);
+                try {
+                    const response = await fetch(`/stocks/${stockCode}/build-features/`, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-CSRFToken": getCsrfToken(),
+                        },
+                        body: JSON.stringify({}),
+                    });
+                    const result = await response.json();
+                    showStatus(result.message, !result.success);
+                    console.log("build-features 結果:", result);
+                } catch (err) {
+                    showStatus("連線失敗，請確認 Django 伺服器是否正常運作", true);
+                    console.error(err);
+                }
+            });
+        });
+
+        // ---------------------------------------------------------
+        // 「建立標籤」按鈕：計算 Return20 與二元分類標籤，寫入 StockLabel
+        // 這是模型訓練前必須執行的步驟，訓練時會從 StockLabel 組出目標變數 Y
+        // ---------------------------------------------------------
+        document.getElementById("btn-build-labels").addEventListener("click", () => {
+            const stockCode = getStockCodeOrWarn();
+            if (!stockCode) return;
+
+            const button = document.getElementById("btn-build-labels");
+            withButtonLoading(button, "計算中...", async () => {
+                showStatus(`正在計算 ${stockCode} 的標籤...`);
+                try {
+                    const response = await fetch(`/stocks/${stockCode}/build-labels/`, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-CSRFToken": getCsrfToken(),
+                        },
+                        body: JSON.stringify({}),
+                    });
+                    const result = await response.json();
+                    showStatus(result.message, !result.success);
+                    console.log("build-labels 結果:", result);
+                } catch (err) {
+                    showStatus("連線失敗，請確認 Django 伺服器是否正常運作", true);
+                    console.error(err);
+                }
+            });
+        });
+
+        // ---------------------------------------------------------
+        // 「進行 AI 預測」按鈕
+        // ---------------------------------------------------------
+        document.getElementById("btn-predict").addEventListener("click", () => {
+            const stockCode = getStockCodeOrWarn();
+            if (!stockCode) return;
+
+            const button = document.getElementById("btn-predict");
+            withButtonLoading(button, "預測中...", async () => {
+                showStatus(`正在對 ${stockCode} 進行預測...`);
+                try {
+                    const response = await fetch(`/stocks/${stockCode}/predict/`);
+                    const result = await response.json();
+                    showStatus(result.message, !result.success);
+                    console.log("predict 結果:", result);
+
+                    // 顯示預測結果的詳細說明
+                    if (result.success && result.data) {
+                        displayPredictionResult(result.data);
+                    }
+                } catch (err) {
+                    showStatus("連線失敗，請確認 Django 伺服器是否正常運作", true);
+                    console.error(err);
+                }
+            });
+        });
+
+        // 顯示預測結果：機率、買/賣建議、機率條
+        function displayPredictionResult(data) {
+            const box = document.getElementById("prediction-result-box");
+            const content = document.getElementById("prediction-result-content");
+            box.style.display = "block";
+
+            const proba = data.predicted_probability;
+            const probaPct = (proba * 100).toFixed(2);
+            const label = data.predicted_label;
+
+            // 買/賣建議：機率 > 50% 建議買入，< 30% 建議不買，中間觀望
+            let recommendation, recClass;
+            if (proba >= 0.5) {
+                recommendation = "建議買入（模型認為上漲機率高）";
+                recClass = "buy";
+            } else if (proba >= 0.3) {
+                recommendation = "觀望（機率中等，不確定性高）";
+                recClass = "hold";
+            } else {
+                recommendation = "建議不買入（模型認為上漲機率低）";
+                recClass = "sell";
+            }
+
+            // 機率條顏色：越高越綠，越低越紅
+            const barColor = proba >= 0.5 ? "#4caf50" : proba >= 0.3 ? "#ff9800" : "#e57373";
+
+            content.innerHTML = `
+                <p><strong>股票：</strong>${data.stock_code}（預測日期：${data.trade_date}）</p>
+                <p><strong>模型版本：</strong>${data.model_version}</p>
+                <p><strong>上漲機率：</strong>${probaPct}%</p>
+                <div class="probability-bar">
+                    <div class="probability-bar-fill" style="width: ${probaPct}%; background: ${barColor};"></div>
+                </div>
+                <p><span class="recommendation ${recClass}">${recommendation}</span></p>
+                <p style="font-size: 0.85em; color: #666; margin-top: 0.5em;">
+                    <strong>解讀：</strong>此機率代表「未來 20 個交易日內，股價上漲超過 3% 的可能性」。
+                    機率 ${probaPct}% 表示模型估計只有 ${probaPct}% 的機率會上漲超過 3%。
+                    ${proba >= 0.5 ? "超過 50% 門檻，模型判斷為「買入」訊號。" : "低於 50% 門檻，模型判斷為「不買入」訊號。"}
+                </p>
+            `;
+        }
+
+        // ---------------------------------------------------------
+        // 模型選擇切換：LightGBM / XGBoost / TFT 的參數輸入框不一樣，
+        // 切換模型時只顯示對應的那一組
+        // ---------------------------------------------------------
+        document.getElementById("model-type-select").addEventListener("change", (e) => {
+            const v = e.target.value;
+            document.getElementById("lightgbm-params").style.display = (v === "lightgbm") ? "block" : "none";
+            document.getElementById("xgboost-params").style.display = (v === "xgboost") ? "block" : "none";
+            document.getElementById("tft-params").style.display = (v === "tft") ? "block" : "none";
+            // 更新「本次訓練資訊卡」上的模型說明與特徵
+            updateTrainingInfoCard();
+        });
+
+        // 依目前選擇的模型，收集對應的超參數輸入值
+        function collectHyperparams(modelType) {
+            if (modelType === "tft") {
+                return {
+                    seq_len: Number(document.getElementById("param-seq-len-tft").value),
+                    d_model: Number(document.getElementById("param-d-model-tft").value),
+                    n_heads: Number(document.getElementById("param-n-heads-tft").value),
+                    num_layers: Number(document.getElementById("param-num-layers-tft").value),
+                    dropout: Number(document.getElementById("param-dropout-tft").value),
+                    learning_rate: Number(document.getElementById("param-learning-rate-tft").value),
+                    epochs: Number(document.getElementById("param-epochs-tft").value),
+                    batch_size: Number(document.getElementById("param-batch-size-tft").value),
+                };
+            }
+            if (modelType === "xgboost") {
+                return {
+                    n_estimators: Number(document.getElementById("param-n-estimators-xgb").value),
+                    learning_rate: Number(document.getElementById("param-learning-rate-xgb").value),
+                    max_depth: Number(document.getElementById("param-max-depth-xgb").value),
+                    subsample: Number(document.getElementById("param-subsample-xgb").value),
+                    colsample_bytree: Number(document.getElementById("param-colsample-bytree-xgb").value),
+                };
+            }
+            return {
+                n_estimators: Number(document.getElementById("param-n-estimators-lgb").value),
+                learning_rate: Number(document.getElementById("param-learning-rate-lgb").value),
+                num_leaves: Number(document.getElementById("param-num-leaves-lgb").value),
+                max_depth: Number(document.getElementById("param-max-depth-lgb").value),
+                bagging_fraction: Number(document.getElementById("param-bagging-fraction-lgb").value),
+                feature_fraction: Number(document.getElementById("param-feature-fraction-lgb").value),
+            };
+        }
+// ---------------------------------------------------------
+        // 「本次訓練資訊卡」：動態顯示訓練設定摘要 + 所選模型的描述、特徵與超參數
+        // 切換「預測模型」下拉選單或修改表單輸入時即時更新，不是只有單一靜態說明
+        // ---------------------------------------------------------
+        let MODEL_INFO_CACHE = {};
+        let FEATURE_DESC_CACHE = {};
+        let FEATURE_CATEGORIES_CACHE = [];
+
+        async function fetchModelInfo() {
+            try {
+                const resp = await fetch("/stocks/model-info/");
+                const result = await resp.json();
+                if (result.success && result.data) {
+                    MODEL_INFO_CACHE = result.data.models || {};
+                    FEATURE_DESC_CACHE = result.data.features || {};
+                    FEATURE_CATEGORIES_CACHE = result.data.categories || [];
+                } else {
+                    document.getElementById("model-info-loading").textContent =
+                        "無法載入模型資訊：" + (result.message || "未知錯誤");
+                }
+            } catch (err) {
+                console.error("無法載入模型資訊:", err);
+                document.getElementById("model-info-loading").textContent =
+                    "無法載入模型資訊（請確認 Django 伺服器是否正常運作）";
+            }
+            updateTrainingInfoCard();
+        }
+
+
+function updateTrainingInfoCard() {
+            var card = document.getElementById("training-info-card");
+            var loading = document.getElementById("model-info-loading");
+            var content = document.getElementById("training-info-content");
+            var modelType = document.getElementById("model-type-select").value;
+            var modelInfo = MODEL_INFO_CACHE[modelType];
+
+            if (!modelInfo) {
+                if (loading) loading.style.display = "block";
+                if (content) content.style.display = "none";
+                if (card) card.style.display = "none";
+                return;
+            }
+
+            if (card) card.style.display = "block";
+            if (loading) loading.style.display = "none";
+            if (content) content.style.display = "block";
+
+            // 訓練設定摘要
+            var trainStart = document.getElementById("train-start-input").value || "尚未設定";
+            var trainEnd = document.getElementById("train-end-input").value || "尚未設定";
+            var valStart = document.getElementById("validation-start-input").value || "尚未設定";
+            var valEnd = document.getElementById("validation-end-input").value || "尚未設定";
+            var stockCodes = document.getElementById("stock-codes-input").value.trim() || "全部股票";
+            var labelVersion = document.getElementById("label-version-select").value;
+            var labelVersionText = labelVersion === "advanced"
+                ? "進階雙關卡（超額報酬+停損）" : "MVP（Return20 > 3%）";
+            var nRepeats = document.getElementById("param-n-repeats").value;
+            var includeLatest = document.getElementById("include-latest-input").checked ? "是" : "否";
+
+            var grid = "";
+            grid += '<div class="config-item"><span class="config-label">訓練期間</span><span class="config-value">' + trainStart + " ~ " + trainEnd + '</span></div>';
+            grid += '<div class="config-item"><span class="config-label">驗證期間</span><span class="config-value">' + valStart + " ~ " + valEnd + '</span></div>';
+            grid += '<div class="config-item"><span class="config-label">股票範圍</span><span class="config-value">' + stockCodes + '</span></div>';
+            grid += '<div class="config-item"><span class="config-label">標籤版本</span><span class="config-value">' + labelVersionText + '</span></div>';
+            grid += '<div class="config-item"><span class="config-label">重複訓練次數</span><span class="config-value">' + nRepeats + ' 次</span></div>';
+            grid += '<div class="config-item"><span class="config-label">納入最新資料</span><span class="config-value">' + includeLatest + '</span></div>';
+            document.getElementById("info-config-grid").innerHTML = grid;
+
+            // 模型資訊
+            var isSeq = modelInfo.is_sequence_model ? "（序列模型）" : "（樹模型）";
+            var modelHtml = '<p><span class="model-badge">' + modelInfo.name + '</span>';
+            modelHtml += ' <code style="font-size:11px;color:#888;">' + modelType + '</code>';
+            modelHtml += ' <span style="font-size:11px;color:var(--muted);">' + isSeq + '</span></p>';
+            modelHtml += '<p style="font-size:12.5px; margin:6px 0;"><strong>類型：</strong>' + modelInfo.type + '</p>';
+            modelHtml += '<p style="font-size:12.5px; margin:6px 0;"><strong>預估訓練時間：</strong>' + modelInfo.training_time + '</p>';
+            modelHtml += '<p style="font-size:12.5px; margin:6px 0;">' + modelInfo.description + '</p>';
+            modelHtml += '<p style="font-size:12.5px; margin:6px 0;"><strong>特徵處理：</strong>' + modelInfo.features_note + '</p>';
+            document.getElementById("info-model-desc").innerHTML = modelHtml;
+
+            // 超參數
+            var hp = collectHyperparams(modelType);
+            var hpDesc = modelInfo.hyperparam_descriptions || {};
+            var hpEl = document.getElementById("info-hyperparams");
+            hpEl.innerHTML = "";
+            for (var key in hp) {
+                if (!hp.hasOwnProperty(key)) continue;
+                var val = hp[key];
+                var desc = hpDesc[key] || "";
+                hpEl.innerHTML += '<div class="hyperparam-item"><span class="hp-name">' + key + '</span>';
+                hpEl.innerHTML += '<span class="hp-value">= ' + val + '</span>';
+                hpEl.innerHTML += '<span class="hp-desc">' + desc + '</span></div>';
+            }
+
+            // 特徵清單
+            var featureCount = Object.keys(FEATURE_DESC_CACHE).length > 0
+                ? Object.keys(FEATURE_DESC_CACHE).length : 32;
+            document.getElementById("feature-count").textContent = featureCount;
+            var featuresEl = document.getElementById("info-features");
+            featuresEl.innerHTML = "";
+            for (var ci = 0; ci < FEATURE_CATEGORIES_CACHE.length; ci++) {
+                var cat = FEATURE_CATEGORIES_CACHE[ci];
+                var items = "";
+                for (var fi = 0; fi < cat.features.length; fi++) {
+                    var feat = cat.features[fi];
+                    var desc = FEATURE_DESC_CACHE[feat] || feat;
+                    items += '<div class="feature-item"><code>' + feat + '</code><span class="feat-desc">' + desc + '</span></div>';
+                }
+                featuresEl.innerHTML += '<div class="feature-category"><h4>' + cat.name + '</h4><div class="feature-list">' + items + '</div></div>';
+            }
+        }
+
+        // 頁面載入後抓取模型資訊
+        fetchModelInfo();
+
+        // 表單輸入改變時也更新資訊卡
+        var INFO_FORM_IDS = ["train-start-input", "train-end-input", "validation-start-input",
+            "validation-end-input", "stock-codes-input", "label-version-select",
+            "param-n-repeats", "include-latest-input"];
+        for (var fi2 = 0; fi2 < INFO_FORM_IDS.length; fi2++) {
+            var el = document.getElementById(INFO_FORM_IDS[fi2]);
+            if (el) { el.addEventListener("change", updateTrainingInfoCard); el.addEventListener("input", updateTrainingInfoCard); }
+        }
+
+
+        // ---------------------------------------------------------
+        // 「建立訓練紀錄」按鈕：帶上訓練區間、股票範圍、標籤版本、模型類型與超參數
+        // ---------------------------------------------------------
+        document.getElementById("btn-create-training-run").addEventListener("click", () => {
+            const button = document.getElementById("btn-create-training-run");
+            withButtonLoading(button, "建立中...", async () => {
+                const modelType = document.getElementById("model-type-select").value;
+                const payload = {
+                    train_start: document.getElementById("train-start-input").value,
+                    train_end: document.getElementById("train-end-input").value,
+                    validation_start: document.getElementById("validation-start-input").value,
+                    validation_end: document.getElementById("validation-end-input").value,
+                    model_type: modelType,
+                    stock_codes: document.getElementById("stock-codes-input").value.trim(),
+                    label_version: document.getElementById("label-version-select").value,
+                    hyperparams: collectHyperparams(modelType),
+                    n_repeats: Number(document.getElementById("param-n-repeats").value),
+                };
+                try {
+                    const response = await fetch("/stocks/training-runs/create/", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-CSRFToken": getCsrfToken(),  // 沒帶這個 Django 會回 403
+                        },
+                        body: JSON.stringify(payload),
+                    });
+                    const result = await response.json();
+                    showStatus(result.message, !result.success);
+                    console.log("建立訓練紀錄結果:", result);
+                    if (result.success) setTrainingSummaryText(result.message);
+                    await refreshTrainingRunsTable();  // 訓練完成後重新整理表格
+                } catch (err) {
+                    showStatus("連線失敗，請確認 Django 伺服器是否正常運作", true);
+                    console.error(err);
+                }
+            });
+        });
+
+        // ---------------------------------------------------------
+        // 「查看圖表 / 詳情」按鈕：導向個股詳細頁
+        // ---------------------------------------------------------
+                document.getElementById("btn-view-detail").addEventListener("click", () => {
+            const stockCode = getStockCodeOrWarn();
+            if (!stockCode) return;
+            window.location.href = `/stocks/${stockCode}/`;
+        });
+
+        // ---------------------------------------------------------
+        // 共用：抓資料區間並把四個日期填成 60/20/20
+        // ---------------------------------------------------------
+        async function fillDatesFromRange(stockCode) {
+            const params = new URLSearchParams();
+            if (stockCode) params.set("stock_code", stockCode);
+            const lb = getLookbackYears();
+            if (lb) params.set("lookback_years", String(lb));
+            const qs = params.toString() ? ("?" + params.toString()) : "";
+            const resp = await fetch("/stocks/date-range/" + qs);
+            const result = await resp.json();
+            if (!result.success) throw new Error(result.message);
+            const DAY = 86400000;
+            const min = new Date(result.data.min_date + "T00:00:00");
+            const max = new Date(result.data.max_date + "T00:00:00");
+            const spanMs = max - min;
+            const fmt = d => d.toISOString().slice(0, 10);
+            const trainEnd = new Date(min.getTime() + spanMs * 0.6);
+            const valEnd = new Date(min.getTime() + spanMs * 0.8);
+            document.getElementById("train-start-input").value = fmt(min);
+            document.getElementById("train-end-input").value = fmt(trainEnd);
+            document.getElementById("validation-start-input").value = fmt(new Date(trainEnd.getTime() + DAY));
+            document.getElementById("validation-end-input").value = fmt(valEnd);
+            return { minDate: fmt(min), trainEnd: fmt(trainEnd), valEnd: fmt(valEnd) };
+        }
+
+        function guessStockCodeForRange() {
+            return document.getElementById("stock-code-input").value.trim()
+                || document.getElementById("stock-codes-input").value.split(",")[0].trim();
+        }
+
+        // 滾動視窗年數：>0 代表只取最近 N 年資料；0/空 = 全部歷史（擴張式）
+        function getLookbackYears() {
+            const v = parseFloat(document.getElementById("lookback-years-input").value);
+            return (!isNaN(v) && v > 0) ? v : null;
+        }
+
+        // ---------------------------------------------------------
+        // 「自動切分」按鈕：依 60/20/20 比例自動填入四個日期
+        // ---------------------------------------------------------
+        document.getElementById("btn-auto-split").addEventListener("click", async () => {
+            try {
+                const r = await fillDatesFromRange(guessStockCodeForRange());
+                showStatus(
+                    `已套用 60/20/20 切分：Train ${r.minDate} ~ ${r.trainEnd}（前 60%）｜` +
+                    `Val 至 ${r.valEnd}（次 20%）｜最後 20% 留作盲測，不參與訓練`
+                );
+                updateTrainingInfoCard(); // 更新「本次訓練資訊卡」上的日期
+            } catch (err) {
+                showStatus("取得資料區間失敗：" + err.message, true);
+            }
+        });
+
+        // 頁面載入時自動填入最新切分——預設值永遠跟著資料成長右移，不再寫死 2018~2025
+        (async () => {
+            try {
+                const r = await fillDatesFromRange(guessStockCodeForRange());
+                console.log("已自動套用最新 60/20/20 切分：", r);
+            } catch (e) { /* 資料庫尚無資料時靜默保留空欄 */ }
+        })();
+        updateTrainingInfoCard(); // 頁面載入後同步更新「本次訓練資訊卡」
+
+        // ---------------------------------------------------------
+        // 「一鍵重訓練」按鈕：直接以「目前最新資料的 60/20/20」建立並啟動訓練。
+        // 解決「時間推移後訓練邊界停留在過去、模型學不到新資料」的問題。
+        // ---------------------------------------------------------
+        document.getElementById("btn-walkforward-retrain").addEventListener("click", async () => {
+            if (!confirm("將以「目前資料庫的最新 60/20/20」建立並執行一次重訓練。\n同步模式下可能需要數分鐘，確定繼續？")) return;
+            const btnWfr = document.getElementById("btn-walkforward-retrain");
+            btnWfr.disabled = true;
+            showStatus("⏳ 滾動重訓練進行中，請稍候（同步模式可能需要數分鐘）...");
+            try {
+                const modelType = document.getElementById("model-type-select").value;
+                const resp = await fetch("/stocks/walkforward-retrain/", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRFToken": getCsrfToken(),
+                    },
+                    body: JSON.stringify({
+                        stock_codes: document.getElementById("stock-codes-input").value.trim(),
+                        model_type: modelType,
+                        label_version: document.getElementById("label-version-select").value,
+                        n_repeats: Number(document.getElementById("param-n-repeats").value),
+                        lookback_years: getLookbackYears(),
+                        include_latest: document.getElementById("include-latest-input").checked,
+                        hyperparams: collectHyperparams(modelType),
+                    }),
+                });
+                const result = await resp.json();
+                showStatus(result.message, !result.success);
+                // 完成訊息（含 Train/Val 區間、版本、AUC/PR-AUC、樣本數）同時寫進摘要卡長期保留
+                if (result.success) setTrainingSummaryText(result.message);
+                if (result.success) await refreshTrainingRunsTable();
+            } catch (err) {
+                showStatus("重訓練失敗：" + err.message, true);
+            } finally {
+                btnWfr.disabled = false;
+            }
+        });
+
+        // ---------------------------------------------------------
+        // 訓練紀錄表格：分頁瀏覽完整歷史（API 支援 page / page_size），
+        // 趨勢圖另外抓「完整歷史」繪製，不受表格分頁影響。
+        // （後端回傳格式：{ runs: [...], pagination: { page, page_size, total, has_next, has_prev } }）
+        // ---------------------------------------------------------
+        const RUNS_PAGE_SIZE = 10;   // 表格每頁顯示筆數
+        let runsCurrentPage = 1;
+
+        function renderRunsRows(runs) {
+            const tbody = document.querySelector("#training-runs-table tbody");
+            tbody.innerHTML = "";
+            if (runs.length === 0) {
+                tbody.innerHTML = "<tr><td colspan='9'>尚無訓練紀錄</td></tr>";
+                return;
+            }
+            for (const run of runs) {
+                const tr = document.createElement("tr");
+                // 數值安全格式化：API 未回傳或非數字時一律顯示 "-"，避免 TypeError 中斷整列渲染
+                const fmt = (v) => (typeof v === "number" && !isNaN(v) ? v.toFixed(4) : "-");
+                const auc = fmt(run.auc);
+                const aucStd = typeof run.auc_std === "number" ? ` ± ${run.auc_std.toFixed(4)}` : "";
+                const prAuc = fmt(run.pr_auc);
+                const prAucStd = typeof run.pr_auc_std === "number" ? ` ± ${run.pr_auc_std.toFixed(4)}` : "";
+                const repeatsLabel = run.n_repeats > 1 ? `（重複${run.n_repeats}次）` : "";
+                // 股票範圍：建立紀錄時留空代表資料庫內全部股票，顯示成文字而不是空白儲存格
+                const stockScope = (run.stock_codes && String(run.stock_codes).trim())
+                    ? run.stock_codes : "全部股票";
+                const hyperparamsText = run.hyperparams && Object.keys(run.hyperparams).length > 0
+                    ? Object.entries(run.hyperparams).map(([k, v]) => `${k}=${v}`).join(", ")
+                    : "-";
+                // 狀態欄以彩色徽章呈現（completed 綠 / pending、running 黃 / failed 紅）
+                const statusKey = (run.status || "").toLowerCase();
+                const statusMap = { completed: "已完成", pending: "等待中", running: "執行中", failed: "失敗" };
+                const statusLabel = statusMap[statusKey] || run.status;
+                tr.innerHTML = `
+                    <td><strong>${run.model_version}</strong></td>
+                    <td><span class="model-tag">${run.model_type}</span></td>
+                    <td>${stockScope}</td>
+                    <td>${run.train_start} ~ ${run.train_end}</td>
+                    <td>${run.validation_start} ~ ${run.validation_end}</td>
+                    <td><span class="status-badge ${statusKey}">${statusLabel}</span></td>
+                    <td>${auc}${aucStd}${repeatsLabel}</td>
+                    <td>${prAuc}${prAucStd}</td>
+                    <td style="font-size: 0.85em;">${hyperparamsText}</td>
+                `;
+                tbody.appendChild(tr);
+            }
+        }
+
+        function renderRunsPagination(pagination) {
+            const totalPages = Math.max(1, Math.ceil((pagination.total || 0) / (pagination.page_size || RUNS_PAGE_SIZE)));
+            document.getElementById("runs-page-info").textContent =
+                `第 ${pagination.page} / ${totalPages} 頁（共 ${pagination.total} 筆）`;
+            document.getElementById("btn-runs-prev").disabled = !pagination.has_prev;
+            document.getElementById("btn-runs-next").disabled = !pagination.has_next;
+        }
+
+        async function refreshTrainingRunsTable(page = runsCurrentPage) {
+            runsCurrentPage = Math.max(1, page);
+            try {
+                // 表格：依頁碼抓取
+                const respTable = await fetch(`/stocks/training-runs/?page_size=${RUNS_PAGE_SIZE}&page=${runsCurrentPage}`);
+                const resultTable = await respTable.json();
+                if (!resultTable.success) return;
+
+                renderRunsRows(resultTable.data.runs || []);
+                renderRunsPagination(resultTable.data.pagination || {});
+
+                // 摘要卡：以「最新一筆」訓練紀錄組出持續顯示的結果文字
+                renderLatestRunSummary((resultTable.data.runs || [])[0] || null);
+            } catch (err) {
+                console.error("讀取訓練紀錄失敗:", err);
+            }
+        }
+
+        document.getElementById("btn-runs-prev").addEventListener("click", () => refreshTrainingRunsTable(runsCurrentPage - 1));
+        document.getElementById("btn-runs-next").addEventListener("click", () => refreshTrainingRunsTable(runsCurrentPage + 1));
+
+        // 最新訓練結果摘要卡：以 API 回傳的最新一筆訓練紀錄，組出與後端完成訊息
+        // 同格式的文字（Train ...｜Val ...｜版本 ...｜訓練完成（重複N次）。AUC=..., PR-AUC=...）。
+        // 註：列表 API 未回傳樣本數（DB 未儲存），故「頁面重整後自動重建」的版本不含
+        //     （訓練N筆/驗證N筆）；一鍵重訓練當下寫入的原始訊息（含筆數）會完整保留。
+        const RUN_STATUS_LABEL = {
+            pending: "等待訓練",
+            running: "訓練中",
+            completed: "訓練完成",
+            failed: "訓練失敗",
+        };
+        function fmtMetric(v) {
+            return (v === null || v === undefined || isNaN(Number(v))) ? null : Number(v).toFixed(4);
+        }
+        function renderLatestRunSummary(run) {
+            const box = document.getElementById("training-summary-content");
+            if (!box) return;
+            if (!run) {
+                box.textContent = "尚無紀錄：執行「🚀 一鍵重訓練」或「建立訓練紀錄」後，結果會顯示並保留在這裡。";
+                return;
+            }
+            const statusLabel = RUN_STATUS_LABEL[run.status] || run.status;
+            let text =
+                `Train ${run.train_start || "?"} ~ ${run.train_end || "?"}｜` +
+                `Val ${run.validation_start || "?"} ~ ${run.validation_end || "?"}｜` +
+                `版本 ${run.model_version}｜${statusLabel}`;
+            if (run.status === "completed") {
+                text += `（重複${run.n_repeats || 1}次）`;
+                const auc = fmtMetric(run.auc);
+                const prAuc = fmtMetric(run.pr_auc);
+                if (auc !== null) {
+                    const aucStd = fmtMetric(run.auc_std) ?? "0.0000";
+                    text += `。AUC=${auc}±${aucStd}`;
+                }
+                if (prAuc !== null) {
+                    const prStd = fmtMetric(run.pr_auc_std) ?? "0.0000";
+                    text += `, PR-AUC=${prAuc}±${prStd}`;
+                }
+                text += `｜股票範圍 ${run.stock_codes || "全部股票"}｜標籤 ${run.label_version || "-"}`;
+            } else if (run.status === "failed") {
+                text += `（詳細原因請見伺服器日誌）`;
+            }
+            box.textContent = text;
+        }
+
+        // 頁面載入時先抓一次現有的訓練紀錄
+        refreshTrainingRunsTable();
+    </script>
+</body>
+</html>

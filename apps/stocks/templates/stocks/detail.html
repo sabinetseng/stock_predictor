@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ stock_name }}（{{ stock_code }}）決策看板</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highcharts/11.4.8/highstock.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highcharts/11.4.8/modules/exporting.min.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: "Consolas", "Microsoft JhengHei", "PingFang TC", sans-serif;
+            background: #eef1ec;
+            color: #1a211b;
+        }
+        .topbar {
+            background: linear-gradient(90deg, #3c4f3f, #222b23);
+            color: #fff;
+            padding: 14px 20px;
+            display: flex;
+            align-items: baseline;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .topbar h1 { font-size: 1.25rem; margin: 0; }
+        .topbar a { color: #c9d8c0; margin-left: 12px; text-decoration: none; font-size: 0.9rem; }
+        .topbar a:hover { text-decoration: underline; }
+        .container { max-width: 1500px; margin: 0 auto; padding: 16px 20px 40px; }
+        .metric-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0; }
+        .metric-card {
+            background: #fff;
+            border: 1px solid #dee5da;
+            border-radius: 8px;
+            padding: 5px 10px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+        .metric-card .label { font-size: 0.72rem; color: #8a998c; }
+        .metric-card .value { font-size: 1.02rem; font-weight: 800; margin-top: 1px; display: inline-block; }
+        .metric-card .delta { display: inline-block; margin-left: 8px; font-size: 0.72rem; color: #8a998c; }
+        .main-row { display: grid; grid-template-columns: 1.25fr 4.2fr 1.45fr; gap: 14px; }
+        @media (max-width: 1000px) {
+            .metric-row { grid-template-columns: repeat(2, 1fr); }
+            .main-row { grid-template-columns: 1fr; }
+        }
+        .panel { background: #fff; border: 1px solid #dee5da; border-radius: 10px; padding: 12px; margin-bottom: 16px; }
+        .panel h3 { margin: 0 0 6px; font-size: 0.98rem; color: #39463b; }
+        .left-col .panel h3 { margin-top: 6px; }
+        .mid-col .panel h3 { margin-top: 6px; }
+        .info-card {
+            background: #fff;
+            border: 1px solid #dee5da;
+            border-left: 4px solid #5e7561;
+            border-radius: 8px;
+            padding: 7px 10px;
+            margin-bottom: 8px;
+            font-size: 0.86rem;
+        }
+        .info-card .sub { color: #68766a; font-size: 0.78rem; }
+        table.feat { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+        table.feat th, table.feat td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eef1ec; }
+        table.feat th { color: #68766a; font-weight: 600; }
+        .status { margin: 10px 0; padding: 8px 12px; border-radius: 6px; background: #eef2ec; color: #3f5a44; font-size: 0.86rem; }
+        .status.error { background: #fee2e2; color: #991b1b; }
+        select, button {
+            font-family: inherit; padding: 6px 10px; border-radius: 6px;
+            border: 1px solid #c3cfbf; background: #fff; cursor: pointer;
+        }
+        button { background: #5e7561; color: #fff; border: none; font-weight: 600; }
+        button:hover { background: #4a5d4e; }
+        .feat-picker { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 0.86rem; }
+        /* ===== 策略設定面板（原獨立頁面整併）===== */
+        .field { margin-bottom: 10px; }
+        .field > label { display: block; font-size: 0.8rem; color: #4a574c; margin-bottom: 4px; font-weight: 600; }
+        .field input[type=number], .field select {
+            width: 100%; padding: 7px 9px; border: 1px solid #c3cfbf; border-radius: 6px;
+            font-family: inherit; font-size: 0.92rem; background: #fff;
+        }
+        .field label input[type=checkbox] { margin-right: 5px; }
+        .hint { font-size: 0.74rem; color: #8a998c; margin-top: 3px; }
+        .model-info { font-size: 0.78rem; color: #68766a; background: #eef2ec; border: 1px solid #d7e0d3; border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; }
+        .result-box { border: 1px solid #dee5da; border-left: 4px solid #5e7561; border-radius: 8px; padding: 10px 12px; background: #f6f8f4; display: none; font-size: 0.86rem; margin-top: 10px; }
+        .result-box .row { display: flex; justify-content: space-between; padding: 3px 0; }
+        .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; }
+        .badge.buy { background: #edf3ea; color: #3f5a44; }
+        .badge.hold { background: #eef1ec; color: #4a574c; }
+        /* ===== 相關性分析面板（原獨立頁面整併）===== */
+        .corr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+        @media (max-width: 700px) { .corr-grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <h1>{{ stock_name }}（{{ stock_code }}）決策看板</h1>
+        <a href="/">← 回首頁</a>
+    </div>
+
+    <div class="container">
+        <div class="metric-row" id="metric-row"></div>
+
+        <div class="main-row">
+            <div class="left-col">
+                <!-- 即時因子監控：移到網頁左側 -->
+                <div class="panel">
+                    <h3>即時因子監控</h3>
+                    <table class="feat" id="feat-table"></table>
+                </div>
+                <div class="panel" id="doctrine-panel"></div>
+            </div>
+            <div class="mid-col">
+                <div class="panel">
+                    <h3 id="main-title">主圖：K 線走勢、均線與 AI 買賣點</h3>
+                    <div id="chart-main" style="height: 420px;"></div>
+                </div>
+                <div class="panel">
+                    <h3 id="prob-title">動態預測機率 vs 門檻（{{ default_threshold_pct }}%）</h3>
+                    <div id="chart-prob" style="height: 180px;"></div>
+                </div>
+                <div class="panel">
+                    <div class="feat-picker">
+                        <label for="feat-select"><b>特徵監控：</b></label>
+                        <select id="feat-select"></select>
+                        <span style="color:#68766a;font-size:0.8rem;">（左軸特徵 vs 右軸收盤價）</span>
+                    </div>
+                    <div id="chart-feat" style="height: 200px;"></div>
+                </div>
+            </div>
+            <div class="right-col">
+                <!-- 策略設定面板：原獨立「策略設定」頁整併至此 -->
+                <div class="panel" id="strategy-panel">
+                    <h3>策略設定</h3>
+                    <div class="model-info">
+                        最新模型版本：<b id="model-version-display">{{ latest_model_version|default:"尚未訓練" }}</b>｜預設門檻：<b>{{ default_threshold_pct }}%</b><br>
+                        訓練區間：<b id="model-train-range">{% if run_dates %}{{ run_dates.train_start }} ～ {{ run_dates.train_end }}{% else %}尚未訓練{% endif %}</b><br>
+                        測試（驗證）區間：<b id="model-val-range">{% if run_dates %}{{ run_dates.validation_start }} ～ {{ run_dates.validation_end }}{% else %}尚未訓練{% endif %}</b>
+                    </div>
+                    <div class="field">
+                        <label>AI 模型架構</label>
+                        <select id="model_type">{% for m in model_choices %}<option value="{{ m }}" {% if m == 'tft' %}selected{% endif %}>{{ m }}</option>{% endfor %}</select>
+                        <div class="hint">預測、機率曲線與買賣訊號皆使用「此架構最近一次訓練完成」的模型；切換後圖表立即重算。</div>
+                    </div>
+                    <div class="field">
+                        <label>AI 買進機率門檻 (%)</label>
+                        <input type="number" id="threshold" min="0" max="100" step="0.5" value="{{ default_threshold_pct }}">
+                        <div class="hint">特徵分數達到此門檻才觸發進場；調整後指標卡/機率圖即時重算。</div>
+                    </div>
+                    <button type="button" id="btn-reset-th" style="width:100%;margin-bottom:10px;">回復模型預設（{{ default_threshold_pct }}%）</button>
+                    <button type="button" id="btn-predict" style="width:100%;padding:10px;font-size:0.95rem;">進行 AI 預測</button>
+                    <div class="status" id="pred-status" style="display:none;"></div>
+                    <div class="result-box" id="result"></div>
+                </div>
+            </div>
+        </div>
+        <!-- 相關性分析面板：原獨立「相關性分析」頁整併至此 -->
+        <div class="panel" id="correlation-panel">
+            <div class="feat-picker">
+                <h3 style="margin:0;">相關性分析</h3>
+                <label for="corr-target" style="font-size:.86rem;">比較對象：</label>
+                <select id="corr-target"></select>
+                <button type="button" id="btn-corr-analyze"> 分析</button>
+                <span id="corr-status" style="color:#68766a;font-size:.8rem;">以日報酬率計算 Pearson / Spearman / 落後期 / 滾動相關</span>
+            </div>
+            <div class="corr-grid">
+                <div class="info-card" id="corr-pearson">尚未分析。按上方「 分析」開始，或點右欄「 進行 AI 預測」一鍵完成。</div>
+                <div class="info-card" id="corr-spearman">尚未分析。</div>
+            </div>
+            <div id="chart-corr-lag" style="height:260px;margin-top:10px;"></div>
+            <div id="chart-corr-rolling" style="height:240px;"></div>
+        </div>
+
+        <div class="status" id="page-status">載入圖表資料中...</div>
+    </div>
+<script>
+    const STOCK_CODE = "{{ stock_code }}";
+    const STOCK_NAME = "{{ stock_name|escapejs }}";
+    const MODEL_RUNS = {{ model_runs_json|safe }};
+    let CHART_DATA = {{ chart_data|safe }};
+    const MODEL_DEFAULT_THRESHOLD = {{ default_threshold_pct }};
+    // 最近一次完成訓練的區間（訓練區間 / 測試驗證區間），顯示在預測結果卡上
+    const RUN_DATES = {{ run_dates_json|safe }};
+
+    function trainRangeStr() {
+        return RUN_DATES ? (RUN_DATES.train_start + " ～ " + RUN_DATES.train_end) : "-";
+    }
+    function valRangeStr() {
+        return RUN_DATES ? (RUN_DATES.validation_start + " ～ " + RUN_DATES.validation_end) : "-";
+    }
+
+    // 目前生效的門檻（%）：由右側「策略設定」面板的輸入框即時決定，未填時退回模型預設
+    function getThresholdPct() {
+        const el = document.getElementById("threshold");
+        const v = parseFloat(el && el.value);
+        return (!isNaN(v) && v >= 0 && v <= 100) ? v : MODEL_DEFAULT_THRESHOLD;
+    }
+
+    // 目前選擇的模型架構：右欄「AI 模型架構」下拉選單（lightgbm / xgboost / tft）
+    // 預測、機率曲線與買賣訊號都會用「該架構最近一次訓練完成」的模型
+    function getSelectedModelType() {
+        const el = document.getElementById("model_type");
+        return (el && (el.value === "xgboost" || el.value === "lightgbm" || el.value === "tft")) ? el.value : "lightgbm";
+    }
+
+    // 更新面板上的「最新模型版本」顯示
+    function updateModelVersionDisplay(version) {
+        const el = document.getElementById("model-version-display");
+        if (el && version) el.textContent = version;
+    }
+
+    // 最新一筆突破機率：優先用 server 端歷史推論序列，沒有才退回單筆預測紀錄
+    function lastProb() {
+        if (probs.length) return probs[probs.length - 1].probability;
+        if (predictions.length) return predictions[predictions.length - 1].probability;
+        return null;
+    }
+    // 最新機率日期：與 lastProb() 使用相同優先順序
+    function lastProbDate() {
+        if (probs.length) return probs[probs.length - 1].date;
+        if (predictions.length) return predictions[predictions.length - 1].date;
+        return null;
+    }
+    let price = CHART_DATA.price || [];
+    let predictions = CHART_DATA.predictions || [];
+    let features = CHART_DATA.features || [];
+    let benchmark = CHART_DATA.benchmark || [];
+    let probs = CHART_DATA.probs || [];                       // 歷史每日突破機率（server 批次推論）
+    let signals = CHART_DATA.signals || { buys: [], sells: [] }; // 模擬交易買賣點
+
+    const FEAT_MAP = {
+        "inst_net_buy_20d": "法人20日買超", "inst_accel": "法人籌碼加速度",
+        "margin_mom": "融資餘額月動能", "ma20_slope": "20日均線斜率",
+        "ma60_slope": "60日均線斜率", "bias_ma20": "MA20乖離率",
+        "bias_ma60": "MA60乖離率", "vol_ratio_5_20": "5/20日均量比",
+        "volatility_20d": "20日年化波動率", "rsi_diff_3d": "RSI 3日變化",
+        "rsi_monthly": "月線 RSI", "macd_monthly": "月線 MACD",
+        "sox_mom": "費半動能", "rs_vs_sox": "相對費半強弱度",
+        "usd_twd_change_rate": "台幣匯率月動能", "vix_level_percentile": "VIX 水位百分位",
+    };
+    const DATE_OF = d => new Date(d).getTime();
+
+    function statusMsg(msg, isErr = false) {
+        const el = document.getElementById("page-status");
+        el.textContent = msg;
+        el.className = "status" + (isErr ? " error" : "");
+    }
+
+    function fmtPct(v) { return (v === null || v === undefined) ? "-" : (v * 100).toFixed(2) + "%"; }
+
+        function renderMetrics() {
+        const last = price.length ? price[price.length - 1] : null;
+        const lp = lastProb();
+        const th = getThresholdPct();
+        const row = document.getElementById("metric-row");
+        // ===== 第 4 張卡：AI 推論結果（原左下角 diag 卡整併至此，避免重複顯示）=====
+        // 狀態機（與後端歷史買賣點模擬同一套規則，見 services.compute_history_signals）：
+        //   空手：機率 >= 門檻 → 新觸發建倉 (BUY)；否則 → 維持觀望 (WAIT)
+        //   持倉中（最近一次訊號是買點且尚未出場）以「最近買點收盤 → 最新收盤」報酬比對停利/停損門檻：
+        //     達停利（預設 +6%）→「建議停利賣出 (TAKE PROFIT)」、觸停損（預設 -4.5%）→「建議停損賣出 (STOP LOSS)」、
+        //     其餘「持倉觀察中 (HOLD)」（顯示進場價、浮動損益與門檻）；
+        //   最新機率日剛觸發賣點 →「賣出訊號觸發 (SELL)」並標註原因（停利／停損／機率跌破門檻）。
+        // 門檻由後端 API 帶入（take_profit_pct/stop_loss_pct，與歷史買賣點模擬 S-2 用同一組常數），
+        // K 線上的 S 旗標即這套紀律的歷史軌跡（歷史模擬買點／賣點次數也顯示在卡片上）。
+        // 停利／停損門檻：供前端「AI 推論結果」卡片的持倉狀態判斷（停利賣出/停損賣出/續抱）
+        const TP = (typeof CHART_DATA.take_profit_pct === "number") ? CHART_DATA.take_profit_pct : 0.06;
+        const SL = (typeof CHART_DATA.stop_loss_pct === "number") ? CHART_DATA.stop_loss_pct : 0.045;
+        const tpTxt = "+" + (TP * 100).toFixed(1) + "%", slTxt = "-" + (SL * 100).toFixed(1) + "%";
+        const closeOf = {};
+        for (const p of price) closeOf[p.date] = p.close;
+
+        const buys = signals.buys || [], sells = signals.sells || [];
+        const lastBuy = buys.length ? buys[buys.length - 1] : null;   // ISO 日期
+        const lastSell = sells.length ? sells[sells.length - 1] : null;
+        // Latest probability date (uses same data priority as lastProb())
+        const latestProbDate = lastProbDate();
+        // 持倉判定：最近一次買點在最近一次賣點之後（或沒有賣點）
+        const holding = !!lastBuy && (!lastSell || lastBuy > lastSell);
+        // 最新機率與進場點的報酬：最近買點收盤 → 最新收盤
+        let gross = null;
+        if (lastBuy && closeOf[lastBuy] !== undefined && last) {
+            gross = (last.close - closeOf[lastBuy]) / closeOf[lastBuy];
+        }
+        const grossTxt = gross === null ? "-" : ((gross >= 0 ? "+" : "") + (gross * 100).toFixed(2) + "%");
+        const entryTxt = lastBuy
+            ? ("自 " + lastBuy + " 進場（" + (closeOf[lastBuy] !== undefined ? closeOf[lastBuy].toFixed(1) + " 元" : "價格資料缺") + "）")
+            : "";
+        const countsTxt = "歷史模擬買點 " + buys.length + " 次／賣點 " + sells.length + " 次";
+
+        let borderColor = "#c3cfbf", txtColor = "#1a211b";
+        let sig, extra;
+        // 新買進訊號檢測：最新機率 >= 門檻，且最新機率日期不在買點列表內（表示新訊號剛觸發）
+        const isNewBuySignal = latestProbDate !== null
+            && lp !== null
+            && lp >= th / 100
+            && !buys.includes(latestProbDate);
+        if (lp === null) {
+            sig = "N/A";
+            extra = countsTxt;
+        } else if (!holding && lastBuy && lastSell && lastSell === latestProbDate) {
+            // 賣出訊號剛在最新機率日觸發（之後就會回到空手狀態）：標註觸發原因供複盤
+            sig = "賣出訊號觸發 (SELL)";
+            borderColor = "#ef4444"; txtColor = "#b91c1c";
+            const reason = gross === null ? "機率跌破門檻"
+                : (gross >= TP ? "停利 " + tpTxt : (gross <= -SL ? "停損 " + slTxt : "機率跌破門檻"));
+            extra = "觸發原因: " + reason + "｜" + entryTxt + "｜區間報酬 " + grossTxt;
+        } else if (holding && gross !== null && gross >= TP) {
+            sig = "建議停利賣出 (TAKE PROFIT)";
+            borderColor = "#ef4444"; txtColor = "#b91c1c";
+            extra = entryTxt + "｜區間報酬 " + grossTxt + "｜觸及停利 " + tpTxt;
+        } else if (holding && gross !== null && gross <= -SL) {
+            sig = "建議停損賣出 (STOP LOSS)";
+            borderColor = "#ef4444"; txtColor = "#b91c1c";
+            extra = entryTxt + "｜區間報酬 " + grossTxt + "｜觸及停損 " + slTxt;
+        } else if (holding && isNewBuySignal) {
+            // 已持倉但最新機率重新觸發買點（新訊號）：顯示新進倉提示而非死守 HOLD
+            sig = "新訊號續抱 (BUY)";
+            borderColor = "#eab308"; txtColor = "#a16207";
+            extra = entryTxt + "｜浮動損益 " + grossTxt + "｜停利 " + tpTxt + "／停損 " + slTxt;
+        } else if (holding) {
+            sig = "持倉觀察中 (HOLD)";
+            borderColor = "#3b82f6"; txtColor = "#1d4ed8";
+            extra = entryTxt + "｜浮動損益 " + grossTxt + "｜停利 " + tpTxt + "／停損 " + slTxt;
+        } else if (lp >= th / 100) {
+            sig = "新觸發建倉 (BUY)";
+            borderColor = "#eab308"; txtColor = "#a16207";
+            extra = countsTxt;
+        } else {
+            sig = "維持觀望 (WAIT)";
+            extra = countsTxt;
+        }
+
+        const nb = (signals.buys || []).length;
+        const ns = (signals.sells || []).length;
+        const cards = [
+            { label: "股票代號/名稱", value: STOCK_CODE + " " + STOCK_NAME, delta: last ? last.date : "" },
+            { label: "最新收盤報價", value: last ? last.close.toFixed(1) + " 元" : "-", delta: "還原收盤價" },
+            { label: "突破概率預測", value: fmtPct(lp === null ? 0 : lp), delta: "門檻 " + th + "%" },
+            {
+                label: "【" + STOCK_CODE + " " + STOCK_NAME + "】AI 推論結果",
+                value: sig,
+                valueStyle: ' style="color:' + txtColor + '"',
+                borderStyle: ' style="border-left:4px solid ' + borderColor + '"',
+                delta: "預測機率: <b>" + fmtPct(lp === null ? 0 : lp) + "</b>（門檻 " + th + "%）",
+                extra: "歷史模擬買點 " + nb + " 次／賣點 " + ns + " 次",
+            },
+        ];
+        row.innerHTML = cards.map(c =>
+            '<div class="metric-card"' + (c.borderStyle || '') + '>' +
+            '<div class="label">' + c.label + '</div>' +
+            '<div class="value"' + (c.valueStyle || '') + '>' + c.value + '</div>' +
+            '<div class="delta">' + c.delta + '</div>' +
+            (c.extra ? '<div class="delta">' + c.extra + '</div>' : '') +
+            '</div>').join("");
+    }
+
+    function renderMain() {
+        const el = document.getElementById("chart-main");
+        if (price.length === 0) { el.innerHTML = "<p style='color:red'>無股價資料</p>"; return; }
+        const ohlc = price.map(p => [DATE_OF(p.date), p.open, p.high, p.low, p.close]);
+        const closes = price.map(p => [DATE_OF(p.date), p.close]);
+        function maN(n) {
+            const out = []; let sum = 0;
+            for (let i = 0; i < closes.length; i++) {
+                sum += closes[i][1];
+                if (i >= n) sum -= closes[i - n][1];
+                if (i >= n - 1) out.push([closes[i][0], sum / n]);
+            }
+            return out;
+        }
+        // 買賣點來自 server 端歷史推論＋進出場模擬，不是 label 0/1
+        const buys = (signals.buys || []).map(d => ({ x: DATE_OF(d), title: "B" }));
+        const sells = (signals.sells || []).map(d => ({ x: DATE_OF(d), title: "S" }));
+        const se = [];
+        se.push({ id: "k", type: "candlestick", name: "K線", data: ohlc, color: "#16a34a", upColor: "#dc2626", lineColor: "#16a34a", upLineColor: "#dc2626" });
+        se.push({ name: "MA20", data: maN(20), type: "line", color: "#cd8558", lineWidth: 1.4 });
+        se.push({ name: "MA60", data: maN(60), type: "line", color: "#8b79a8", lineWidth: 1.5 });
+        if (buys.length) se.push({ name: "BUY", type: "flags", onSeries: "k", data: buys, shape: "circlepin", color: "#d4b95c", style: { color: "#1e293b" }, y: -26 });
+        if (sells.length) se.push({ name: "SELL", type: "flags", onSeries: "k", data: sells, shape: "circlepin", color: "#b39bd1", style: { color: "#43325e" } });
+        Highcharts.stockChart("chart-main", {
+            rangeSelector: { enabled: true, inputEnabled: false, buttons: [{ type: "month", count: 3, text: "3月" }, { type: "month", count: 6, text: "6月" }, { type: "all", text: "全部" }], selected: 2 },
+            title: { text: STOCK_NAME + "（" + STOCK_CODE + "）K 線、均線與 AI 買賣點" },
+            yAxis: { title: { text: "股價 (NTD)" } },
+            series: se,
+            navigator: { enabled: true, height: 28 },
+            scrollbar: { enabled: false }
+        });
+    }
+
+function renderProb() {
+        const el = document.getElementById("chart-prob");
+        const src = probs.length ? probs : predictions;
+        if (src.length === 0) { el.innerHTML = "<p style='color:#8a998c'>尚未有預測資料，請點右側「進行 AI 預測」。</p>"; return; }
+        const th = getThresholdPct();
+        const data = src.map(p => [DATE_OF(p.date), p.probability]);
+        Highcharts.stockChart("chart-prob", {
+            rangeSelector: { enabled: false }, navigator: { enabled: false }, scrollbar: { enabled: false },
+            title: { text: "" },
+            yAxis: { title: { text: "機率" }, min: 0, max: 1, plotLines: [{ value: th / 100, color: "#cd8558", dashStyle: "dash", width: 2, label: { text: "門檻 " + th + "%" } }] },
+            xAxis: { type: "datetime" },
+            series: [{ name: "突破機率", type: "area", data: data, color: "#5e7561", fillOpacity: 0.15, threshold: th / 100 }],
+            tooltip: { valueDecimals: 2 }
+        });
+    }
+
+    function selectedFeat() { return document.getElementById("feat-select").value; }
+
+    function renderFeat() {
+        const el = document.getElementById("chart-feat");
+        if (features.length === 0) { el.innerHTML = "<p style='color:#8a998c'>尚無特徵資料。</p>"; return; }
+        const f = selectedFeat();
+        const fdata = features.map(r => [DATE_OF(r.date), r[f]]).filter(x => x[1] !== null && x[1] !== undefined);
+        const closes = price.map(p => [DATE_OF(p.date), p.close]);
+        Highcharts.chart("chart-feat", {
+            title: { text: "" },
+            xAxis: { type: "datetime" },
+            yAxis: [
+                { title: { text: FEAT_MAP[f] || f } },
+                { title: { text: "股價" }, opposite: true }
+            ],
+            legend: { enabled: true, verticalAlign: "top" },
+            series: [
+                { name: FEAT_MAP[f] || f, data: fdata, color: "#5e7561", yAxis: 0, lineWidth: 1.6 },
+                { name: "收盤價", data: closes, color: "#68766a", yAxis: 1, lineWidth: 1.2, dashStyle: "dot" }
+            ]
+        });
+    }
+
+    // 舊「AI 推論結果」診斷卡已整併進右上指標卡第 4 格（renderMetrics），
+    // 此函式保留為空殼以相容既有呼叫點；diag-panel 面板元素亦已自模板移除。
+    function renderDiag() {}
+
+    function renderDoctrine() {
+        const panel = document.getElementById("doctrine-panel");
+        const n = price.length;
+        let ret20 = "-";
+        if (n > 20) ret20 = ((price[n - 1].close - price[n - 21].close) / price[n - 21].close * 100).toFixed(2) + "%";
+        panel.innerHTML = '<h3> 近期表現</h3><div class="info-card" style="border-left:4px solid #5e7561;">' +
+            '<div style="display:flex;justify-content:space-between;"><span class="sub">近 20 日累計報酬：</span><b>' + ret20 + '</b></div>' +
+            '<div style="display:flex;justify-content:space-between;"><span class="sub">基準日股本：</span><b>' + (price.length ? price[price.length - 1].date : "-") + '</b></div>' +
+            '<hr style="margin:6px 0;border:none;border-top:1px dashed #c3cfbf;"/>' +
+            '<div class="sub">右側「策略設定」可即時調整進場門檻；門檻一改，上方圖表立即重算。</div></div>';
+    }
+
+    function fmtFactorValue(k, v) {
+        if (v === null || v === undefined || isNaN(v)) return "-";
+        // 小比值類保留 4 位小數；張數級大數值加千分位，其餘 2 位小數
+        if (Math.abs(v) < 0.01) return v.toFixed(4);
+        if (k === "inst_net_buy_20d" && Math.abs(v) >= 1000)
+            return (v > 0 ? "+" : "") + Math.round(v).toLocaleString("en-US");
+        return v.toFixed(2);
+    }
+
+    function renderFeatTable() {
+        const last = features.length ? features[features.length - 1] : null;
+        const tbody = document.getElementById("feat-table");
+        if (!last) { tbody.innerHTML = "<tr><td colspan='2'>無特徵資料</td></tr>"; return; }
+        let html = "<thead><tr><th>因子</th><th>最新值</th></tr></thead><tbody>";
+        Object.keys(FEAT_MAP).forEach(k => {
+            const v = last[k];
+            html += "<tr><td>" + FEAT_MAP[k] + "</td><td>" + fmtFactorValue(k, v) + "</td></tr>";
+        });
+        html += "<tr><td style=\"color:#8a998c\">資料日期</td><td style=\"color:#8a998c\">" +
+            (last.date || "-") + "</td></tr>";
+        html += "</tbody>";
+        tbody.innerHTML = html;
+    }
+
+    function buildFeatPicker() {
+        const sel = document.getElementById("feat-select");
+        sel.innerHTML = Object.keys(FEAT_MAP).map(k => '<option value="' + k + '">' + FEAT_MAP[k] + "</option>").join("");
+        sel.onchange = renderFeat;
+    }
+
+    // ===== 策略設定面板（原獨立「策略設定」頁整併進本頁右欄）=====
+    function setPredStatus(msg, isErr = false) {
+        const el = document.getElementById("pred-status");
+        el.style.display = "block";
+        el.textContent = msg;
+        el.className = "status" + (isErr ? " error" : "");
+    }
+
+    // 門檻改變 → 向 server 重抓該門檻下的穿越訊號，並即時重繪主圖旗標／指標卡／機率圖／診斷卡
+    async function refreshThresholdDependent() {
+        try { await refreshSignalsFromServer(); } catch (e) {}
+        renderMetrics();
+        try { renderMain(); } catch (e) {}
+        try { renderProb(); } catch (e) {}
+        renderDiag();
+    }
+
+    // 以目前面板門檻與選擇的模型架構，向輕量端點重抓買賣訊號
+    async function refreshSignalsFromServer() {
+        const th = (getThresholdPct() / 100).toFixed(4);
+        const resp = await fetch("/stocks/" + STOCK_CODE + "/signals/?threshold=" + th + "&days=250&model_type=" + getSelectedModelType());
+        const r = await resp.json();
+        if (r.success && r.data) {
+            signals = r.data.signals || { buys: [], sells: [] };
+            if (r.data.probs && r.data.probs.length) probs = r.data.probs;
+            updateModelVersionDisplay(r.data.model_version);
+        }
+    }
+
+    function initStrategyPanel() {
+        const thInput = document.getElementById("threshold");
+        if (!thInput) return;
+        thInput.addEventListener("change", refreshThresholdDependent);
+        document.getElementById("btn-reset-th").addEventListener("click", async () => {
+            thInput.value = MODEL_DEFAULT_THRESHOLD;
+            await refreshThresholdDependent();
+        });
+        // 模型架構切換 → 立即以該架構的模型重抓機率曲線與買賣訊號，圖表同步更新
+        const modelSel = document.getElementById("model_type");
+        if (modelSel) {
+            modelSel.addEventListener("change", async () => {
+                const btn = document.getElementById("btn-predict");
+                btn.disabled = true;
+                setPredStatus(" 切換至 " + getSelectedModelType() + " 模型，重新計算機率與買賣訊號...");
+                try {
+                    await refreshChartData();
+                    renderMetrics();
+                    try { renderMain(); } catch (e) {}
+                    try { renderProb(); } catch (e) {}
+                    renderDiag(); renderDoctrine(); renderFeatTable();
+                    setPredStatus(" 已切換至 " + getSelectedModelType() + " 模型（版本：" +
+                        (CHART_DATA.model_version || "尚未訓練") + "）");
+                } catch (e) {
+                    setPredStatus(" 切換模型失敗：" + e.message, true);
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+        }
+        document.getElementById("btn-predict").addEventListener("click", async () => {
+            const btn = document.getElementById("btn-predict");
+            btn.disabled = true;
+            try {
+                // ===== 純預測模式 =====
+                // 不同步資料（含美金資料）、不建立特徵、不建立標籤
+                // 模型部分保留，用最後一次訓練的模型資料進行預測
+                setPredStatus(" 進行 AI 預測中，請稍候...");
+                const resp = await fetch("/stocks/" + STOCK_CODE + "/predict/?model_type=" + getSelectedModelType());
+                const result = await resp.json();
+                if (!result.success) throw new Error("預測失敗：" + (result.message || "未知錯誤"));
+
+                // 重抓圖表資料並重繪所有圖表
+                setPredStatus(" 重新載入圖表資料...");
+                await refreshChartData();
+                renderMetrics();
+                try { renderMain(); } catch (e) {}
+                try { renderProb(); } catch (e) {}
+                buildFeatPicker();
+                try { renderFeat(); } catch (e) {}
+                renderDiag(); renderDoctrine(); renderFeatTable();
+
+                // 相關性分析也一併重算（生成相關圖表）
+                try { await analyzeCorrelation(); } catch (e) {}
+
+                const d = result.data || {};
+                const prob = d.predicted_probability !== undefined ? (d.predicted_probability * 100).toFixed(2) : "-";
+                const buy = d.predicted_label === 1;
+                const badge = buy ? '<span class="badge buy">BUY 買進</span>' : '<span class="badge hold">HOLD 觀望</span>';
+                const box = document.getElementById("result");
+                box.style.display = "block";
+                box.innerHTML =
+                    '<div class="row"><span>基準日期</span><b>' + (d.trade_date || "-") + '</b></div>' +
+                    '<div class="row"><span>模型版本</span><b>' + (d.model_version || "-") + '</b></div>' +
+                    '<div class="row"><span>訓練區間</span><b>' + trainRangeStr() + '</b></div>' +
+                    '<div class="row"><span>測試（驗證）區間</span><b>' + valRangeStr() + '</b></div>' +
+                    '<div class="row"><span>突破機率</span><b>' + prob + '%</b></div>' +
+                    '<div class="row"><span>決策</span>' + badge + '</div>';
+                setPredStatus(" 全部完成：" + (result.message || ""));
+                await refreshThresholdDependent();
+            } catch (e) {
+                setPredStatus(" " + e.message, true);
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    }
+
+    // 重抓 chart-data API，更新全域資料（呼叫端負責重新渲染各圖表）
+    async function refreshChartData() {
+        const resp = await fetch("/stocks/" + STOCK_CODE + "/chart-data/?model_type=" + getSelectedModelType());
+        const result = await resp.json();
+        if (!result.success) throw new Error("重新載入圖表資料失敗：" + (result.message || ""));
+        CHART_DATA = result.data;
+        price = CHART_DATA.price || [];
+        predictions = CHART_DATA.predictions || [];
+        features = CHART_DATA.features || [];
+        benchmark = CHART_DATA.benchmark || [];
+        probs = CHART_DATA.probs || [];
+        signals = CHART_DATA.signals || { buys: [], sells: [] };
+        updateModelVersionDisplay(CHART_DATA.model_version);
+    }
+
+    // ===== 相關性分析面板（原獨立「相關性分析」頁整併）=====
+    const CORR_TARGETS = [
+        ["USD_TWD", "美金兌台幣匯率"], ["TWII", "台灣加權指數"],
+        ["SOX", "費城半導體指數"], ["VIX", "恐慌指數 VIX"],
+    ];
+
+    function corrStrength(v) {
+        const a = Math.abs(v);
+        return a >= 0.7 ? "強相關" : a >= 0.4 ? "中度相關" : a >= 0.2 ? "弱相關" : "幾乎無相關";
+    }
+
+    function renderCorrCard(elId, name, sub) {
+        const el = document.getElementById(elId);
+        if (!sub || !sub.success) {
+            el.style.borderLeftColor = "#c3cfbf";
+            el.innerHTML = '<div class="sub">' + name + '</div><div style="color:#8a998c;font-size:.85rem;">' + ((sub && sub.message) || "無法計算") + '</div>';
+            return;
+        }
+        const c = sub.data.correlation;
+        const color = c >= 0 ? "#dc2626" : "#16a34a";
+        el.style.borderLeftColor = color;
+        el.innerHTML =
+            '<div class="sub">' + name + '（樣本 n=' + sub.data.n + '）</div>' +
+            '<div style="font-size:1.6rem;font-weight:800;color:' + color + ';">' + c.toFixed(4) + '</div>' +
+            '<div class="sub">p-value: ' + Number(sub.data.p_value).toExponential(2) +
+            '｜' + corrStrength(c) + (sub.data.p_value < 0.05 ? "｜統計顯著" : "") + '</div>';
+    }
+
+    async function analyzeCorrelation() {
+        const target = document.getElementById("corr-target").value;
+        const st = document.getElementById("corr-status");
+        st.textContent = "計算中...";
+        const resp = await fetch("/analysis/correlation/" + STOCK_CODE + "/?compare_target=" + encodeURIComponent(target));
+        if (!resp.ok) throw new Error("相關性 API 失敗（HTTP " + resp.status + "）");
+        const r = await resp.json();
+        const d = r.data || {};
+
+        renderCorrCard("corr-pearson", "Pearson 相關係數", d.pearson);
+        renderCorrCard("corr-spearman", "Spearman 相關係數", d.spearman);
+
+        const lagEl = document.getElementById("chart-corr-lag");
+        const rollEl = document.getElementById("chart-corr-rolling");
+        const lagData = d.lagged && d.lagged.success && d.lagged.data ? d.lagged.data : [];
+        if (lagData.length) {
+            const best = lagData.reduce((a, b) => Math.abs(b.correlation) > Math.abs(a.correlation) ? b : a);
+            lagEl.style.display = "";
+            Highcharts.chart("chart-corr-lag", {
+                chart: { type: "column" },
+                title: { text: "比較對象領先 N 天的相關性（最強：lag=" + best.lag + " 天，r=" + best.correlation.toFixed(4) + "）" },
+                xAxis: { title: { text: "Lag（天）" }, tickInterval: 2 },
+                yAxis: { title: { text: "相關係數" } },
+                series: [{ name: "相關係數", data: lagData.map(x => [x.lag, Number(x.correlation.toFixed(4))]), color: "#5e7561" }],
+                legend: { enabled: false }
+            });
+        } else {
+            lagEl.style.display = "none";
+        }
+
+        const rollData = d.rolling && d.rolling.success && d.rolling.data ? d.rolling.data : [];
+        if (rollData.length) {
+            rollEl.style.display = "";
+            Highcharts.stockChart("chart-corr-rolling", {
+                rangeSelector: { enabled: false }, navigator: { enabled: false }, scrollbar: { enabled: false },
+                title: { text: "20 日滾動相關係數（觀察關聯強度隨時間變化）" },
+                yAxis: { min: -1, max: 1 },
+                series: [{ type: "area", name: "滾動相關", data: rollData.map(x => [Date.parse(x.date), x.correlation]), color: "#8b79a8", fillOpacity: 0.15 }]
+            });
+        } else {
+            rollEl.style.display = "none";
+        }
+
+        st.textContent = "完成（比較對象：" + target + "）";
+    }
+
+    function initCorrelationPanel() {
+        const sel = document.getElementById("corr-target");
+        sel.innerHTML = CORR_TARGETS.map(t => '<option value="' + t[0] + '">' + t[0] + "（" + t[1] + "）</option>").join("");
+        document.getElementById("btn-corr-analyze").addEventListener("click", async () => {
+            const b = document.getElementById("btn-corr-analyze");
+            b.disabled = true;
+            try { await analyzeCorrelation(); }
+            catch (e) { document.getElementById("corr-status").textContent = "失敗：" + e.message; }
+            finally { b.disabled = false; }
+        });
+    }
+
+    function run() {
+        try {
+            renderMetrics();
+            try { renderMain(); } catch (e) { document.getElementById("chart-main").innerHTML = "<p style='color:red'>主圖渲染失敗：" + e.message + "</p>"; }
+            try { renderProb(); } catch (e) { document.getElementById("chart-prob").innerHTML = "<p style='color:red'>機率圖渲染失敗：" + e.message + "</p>"; }
+            buildFeatPicker();
+            try { renderFeat(); } catch (e) { document.getElementById("chart-feat").innerHTML = "<p style='color:red'>特徵圖渲染失敗：" + e.message + "</p>"; }
+            renderDiag(); renderDoctrine(); renderFeatTable();
+            statusMsg("已載入 " + price.length + " 筆股價、" + predictions.length + " 筆預測、大盤 " + benchmark.length + " 筆。");
+        } catch (e) {
+            statusMsg("載入失敗：" + e.message, true);
+        }
+    }
+    initStrategyPanel();
+    initCorrelationPanel();
+    run();
+    // 頁面載入後，立即以「目前選擇的模型架構」抓取機率曲線與買賣訊號（probs / B/S 旗標）
+    (async () => {
+        try { await refreshThresholdDependent(); } catch (e) {}
+    })();
+</script>
+</body>
+</html>

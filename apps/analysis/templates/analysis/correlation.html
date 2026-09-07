@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>股票相關性分析 - {{ stock_code }}</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highcharts/11.4.8/highcharts.min.js"></script>
+    <style>
+        body, input, select, button, table, td, th, p, label, div, span, code {
+            font-family: "Consolas", "Microsoft JhengHei", "PingFang TC", sans-serif;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 1em; }
+        .chart-box { margin-bottom: 2em; }
+        #analysis-status { margin: 1em 0; padding: 0.5em; border: 1px solid #ccc; }
+        .correlation-card {
+            display: inline-block; padding: 1em 2em; border: 1px solid #ccc;
+            border-radius: 4px; margin: 0.5em; text-align: center; min-width: 220px;
+        }
+        .correlation-value { font-size: 2.5em; font-weight: bold; line-height: 1; }
+        .correlation-value.positive { color: #2e7d32; }
+        .correlation-value.negative { color: #c62828; }
+        .correlation-value.neutral { color: #666; }
+        .correlation-meta { font-size: 0.85em; color: #666; margin-top: 0.5em; }
+        .significance-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; font-weight: bold; }
+        .significance-yes { background: #e8f5e9; color: #2e7d32; }
+        .significance-no { background: #ffebee; color: #c62828; }
+        .form-row { margin-bottom: 1.5em; }
+        .form-row label { margin-right: 1em; }
+    </style>
+</head>
+<body>
+    {% csrf_token %}
+    <div class="container">
+        <h1>股票相關性分析</h1>
+        <div style="margin-bottom: 1em;">
+            <a href="/">回首頁</a>
+            | <a href="/stocks/{{ stock_code }}/">{{ stock_code }} 個股詳情</a>
+        </div>
+        <div class="form-row">
+            <label> 股票代碼
+                <input type="text" id="stock-code-input" placeholder="例如 2330" value="{{ stock_code }}" style="width: 120px;">
+            </label>
+            <label> 比較對象
+                <select id="compare-target-select">
+                    <option value="USD_TWD">美元兌台幣 (USD/TWD)</option>
+                    <option value="TWII">台灣加權指數 (TWII)</option>
+                    <option value="SOX">費城半導體指數 (SOX)</option>
+                    <option value="VIX">VIX 恐慌指數 (VIX)</option>
+                </select>
+            </label>
+            <button id="btn-analyze" type="button">分析</button>
+        </div>
+        <div id="analysis-status">請點擊「分析」開始，或稍候自動分析...</div>
+        <h3>相關係數摘要</h3>
+        <p style="font-size: 0.85em; color: #666;">
+            Pearson 與 Spearman 相關係數衡度股票與比較對象日報酬率的線性（Pearson）與等級（Spearman）相關性。
+            值域 -1~1，|r| &gt; 0.3 為強相關，p &lt; 0.05 為統計上顯著。
+        </p>
+        <div id="correlation-cards"></div>
+        <h3>延遲相關係數（Lag Correlation）</h3>
+        <p style="font-size: 0.85em; color: #666;">
+            觀察比較對象領先股票 N 天的相關性。最強相關的 lag 代表比較對象可能對股票有預測指標效果。
+        </p>
+        <div id="chart-lagged-correlation" class="chart-box"></div>
+        <h3>滾動相關係數（Rolling Correlation）</h3>
+        <p style="font-size: 0.85em; color: #666;">
+            以 20 日移動窗格計算近期相關性，觀察關聯強度是否隨時間改變。紅色虛線為 Pearson 參考基準。
+        </p>
+        <div id="chart-rolling-correlation" class="chart-box"></div>
+    </div>
+
+    <script>
+        var COMPARE_TARGET_LABELS = {
+            "USD_TWD": "美元兌台幣 (USD/TWD)",
+            "TWII": "台灣加權指數 (TWII)",
+            "SOX": "費城半導體指數 (SOX)",
+            "VIX": "VIX 恐慌指數 (VIX)",
+        };
+
+        function getCompareTargetLabel(value) {
+            return COMPARE_TARGET_LABELS[value] || value;
+        }
+
+        function showStatus(message, isError) {
+            var box = document.getElementById("analysis-status");
+            box.textContent = message;
+            box.style.borderColor = isError ? "red" : "#ccc";
+            box.style.color = isError ? "red" : "black";
+        }
+
+        async function withButtonLoading(button, loadingText, task) {
+            var originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = loadingText;
+            try {
+                await task();
+            } finally {
+                button.disabled = false;
+                button.textContent = originalText;
+            }
+        }
+
+        function getCorrClass(corr) {
+            var absCorr = Math.abs(corr);
+            if (absCorr < 0.1) return "neutral";
+            return corr >= 0 ? "positive" : "negative";
+        }
+
+        function getColumnColor(value) {
+            return value >= 0 ? "#4caf50" : "#e57373";
+        }
+
+        function getStrengthText(corr) {
+            var absCorr = Math.abs(corr);
+            if (absCorr < 0.1) return "無相關";
+            if (absCorr < 0.3) return "弱相關";
+            if (absCorr < 0.5) return "中弱相關";
+            if (absCorr < 0.7) return "中強相關";
+            return "強相關";
+        }
+
+        function renderCorrelationCard(containerId, title, result) {
+            var container = document.getElementById(containerId);
+            if (!container) return;
+
+            if (!result.success || !result.data) {
+                container.innerHTML =
+                    '<div class="correlation-card" style="border-color: #e57373;">' +
+                    '<div style="font-size: 1em; color: #666;">' + title + '</div>' +
+                    '<div class="correlation-value neutral" style="font-size: 1.5em;">無資料</div>' +
+                    '<div class="correlation-meta" style="color: #c62828;">' +
+                        (result.message || "分析失敗") + '</div></div>';
+                return;
+            }
+
+            var d = result.data, corr = d.correlation, pv = d.p_value, n = d.n;
+            var isSig = pv < 0.05;
+            var corrClass = getCorrClass(corr);
+            var badgeClass = isSig ? "significance-yes" : "significance-no";
+            var badgeText = isSig ? "顯著 (p < 0.05)" : "不顯著 (p ≥ 0.05)";
+
+            container.innerHTML =
+                '<div class="correlation-card">' +
+                '<div style="font-size: 1em; color: #666;">' + title + '</div>' +
+                '<div class="correlation-value ' + corrClass + '">' + corr.toFixed(4) + '</div>' +
+                '<div class="correlation-meta">' + getStrengthText(corr) + '<br>' +
+                'p-value：' + pv.toExponential(3) + ' | 樣本數：' + n + ' 筆<br>' +
+                '<span class="significance-badge ' + badgeClass + '">' + badgeText + '</span>' +
+                '</div></div>';
+        }
+
+        function clearContainers() {
+            document.getElementById("correlation-cards").innerHTML = "";
+            document.getElementById("chart-lagged-correlation").innerHTML = "";
+            document.getElementById("chart-rolling-correlation").innerHTML = "";
+        }
+
+        function renderCorrelationCards(data) {
+            var container = document.getElementById("correlation-cards");
+            container.innerHTML = "";
+            var pd = document.createElement("div"); pd.id = "card-pearson";
+            var sd = document.createElement("div"); sd.id = "card-spearman";
+            container.appendChild(pd); container.appendChild(sd);
+            renderCorrelationCard("card-pearson", "Pearson 相關係數", data.pearson);
+            renderCorrelationCard("card-spearman", "Spearman 相關係數", data.spearman);
+        }
+
+        function renderLaggedChart(data, stockCode, compareTarget) {
+            var container = document.getElementById("chart-lagged-correlation");
+            if (!data.lagged.success || !data.lagged.data || data.lagged.data.length === 0) {
+                container.innerHTML = '<p style="color:red">' +
+                    (data.lagged.message || "無法計算延遲相關係數") + '</p>';
+                return;
+            }
+
+            var laggedData = [];
+            for (var i = 0; i < data.lagged.data.length; i++) {
+                laggedData.push({
+                    x: data.lagged.data[i].lag,
+                    y: data.lagged.data[i].correlation,
+                    color: getColumnColor(data.lagged.data[i].correlation),
+                });
+            }
+
+            var bestLag = data.lagged.data[0];
+            for (var j = 1; j < data.lagged.data.length; j++) {
+                if (Math.abs(data.lagged.data[j].correlation) > Math.abs(bestLag.correlation)) {
+                    bestLag = data.lagged.data[j];
+                }
+            }
+
+            Highcharts.chart("chart-lagged-correlation", {
+                title: { text: stockCode + ' vs ' + getCompareTargetLabel(compareTarget) + ' — 延遲相關係數' },
+                subtitle: { text: '最強相關距離：<b>lag=' + bestLag.lag + ' 天</b>（r=' + bestLag.correlation.toFixed(4) + '）' },
+                xAxis: { title: { text: "延遲天數" }, min: 0, labels: { format: "{value} 天" } },
+                yAxis: {
+                    title: { text: "相關係數" }, min: -1, max: 1,
+                    plotLines: [{ value: 0, color: "#999", width: 1, dashStyle: "dash", label: { text: "0" } }],
+                },
+                tooltip: { formatter: function () {
+                    return '延遲 ' + this.x + ' 天<br>相關係數：' + this.y.toFixed(4);
+                }},
+                series: [{
+                    name: "相關係數", type: "column", data: laggedData,
+                    dataLabels: { enabled: true, format: "{y:.3f}", style: { fontSize: "0.8em" } },
+                }],
+                credits: { enabled: false },
+            });
+        }
+
+        function renderRollingChart(data, stockCode, compareTarget) {
+            var container = document.getElementById("chart-rolling-correlation");
+            if (!data.rolling.success || !data.rolling.data || data.rolling.data.length === 0) {
+                container.innerHTML = '<p style="color:red">' +
+                    (data.rolling.message || "無法計算滾動相關係數") + '</p>';
+                return;
+            }
+
+            var rollingData = [];
+            for (var i = 0; i < data.rolling.data.length; i++) {
+                rollingData.push([new Date(data.rolling.data[i].date).getTime(), data.rolling.data[i].correlation]);
+            }
+
+            var pv = data.pearson.success ? data.pearson.data.correlation : null;
+            var plotLines = [{ value: 0, color: "#999", width: 1, dashStyle: "dash", label: { text: "0" } }];
+            if (pv !== null) {
+                plotLines.push({ value: pv, color: "#ff6b6b", width: 1, dashStyle: "dash",
+                    label: { text: "Pearson r=" + pv.toFixed(4) } });
+            }
+
+            Highcharts.chart("chart-rolling-correlation", {
+                title: { text: stockCode + ' vs ' + getCompareTargetLabel(compareTarget) + ' — 滾動相關係數' },
+                subtitle: { text: '窗格：20 天 | 資料筆數：' + rollingData.length + ' 筆' },
+                xAxis: { type: "datetime", title: { text: "日期" } },
+                yAxis: { title: { text: "相關係數" }, min: -1, max: 1, plotLines: plotLines },
+                tooltip: { formatter: function () {
+                    return '日期：' + Highcharts.dateFormat('%Y-%m-%d', this.x) +
+                           '<br>相關係數：' + this.y.toFixed(4);
+                }},
+                series: [{
+                    name: "滾動相關係數", data: rollingData, color: "#2f7ed8",
+                    lineWidth: 1.5, marker: { radius: 3, fillColor: "#2f7ed8" },
+                }],
+                credits: { enabled: false },
+            });
+        }
+
+        async function performAnalysis() {
+            var stockCode = document.getElementById("stock-code-input").value.trim();
+            var compareTarget = document.getElementById("compare-target-select").value;
+
+            if (!stockCode) {
+                showStatus("請輸入股票代碼", true);
+                return;
+            }
+
+            showStatus("正在分析 " + stockCode + " 與 " + getCompareTargetLabel(compareTarget) + " 的關聯...");
+            clearContainers();
+
+            try {
+                var response = await fetch("/analysis/correlation/" + stockCode + "/?compare_target=" + compareTarget);
+
+                if (!response.ok) {
+                    var serverMsg = "伺服器回應錯誤（HTTP " + response.status + "）";
+                    try {
+                        var errResult = await response.json();
+                        serverMsg = errResult.message || serverMsg;
+                    } catch (e) { }
+                    showStatus("分析失敗：" + serverMsg, true);
+                    return;
+                }
+
+                var result = await response.json();
+                if (!result.success) {
+                    showStatus("分析失敗：" + result.message, true);
+                    return;
+                }
+
+                var data = result.data;
+                renderCorrelationCards(data);
+                renderLaggedChart(data, stockCode, compareTarget);
+                renderRollingChart(data, stockCode, compareTarget);
+
+                var summary = "";
+                if (data.pearson.success) {
+                    summary += "Pearson r=" + data.pearson.data.correlation.toFixed(4) +
+                               "（p=" + data.pearson.data.p_value.toExponential(2) + "）；";
+                }
+                if (data.spearman.success) {
+                    summary += "Spearman r=" + data.spearman.data.correlation.toFixed(4) +
+                               "（p=" + data.spearman.data.p_value.toExponential(2) + "）；";
+                }
+                var laggedCount = data.lagged.data ? data.lagged.data.length : 0;
+                var rollingCount = data.rolling.data ? data.rolling.data.length : 0;
+                summary += "延遲資料 " + laggedCount + " 筆，滾動資料 " + rollingCount + " 筆。";
+                showStatus(summary, false);
+
+            } catch (err) {
+                showStatus("連線失敗，請確認 Django 伺服器是否正常運作：" + (err.message || err), true);
+                console.error("performAnalysis 發生錯誤：", err);
+            }
+        }
+
+        document.getElementById("btn-analyze").addEventListener("click", function () {
+            withButtonLoading(this, "分析中...", performAnalysis);
+        });
+
+        window.addEventListener("load", function () {
+            performAnalysis();
+        });
+    </script>
+</body>
+</html>

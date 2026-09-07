@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>策略設定 — {{ stock_name }}（{{ stock_code }}）</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: "Consolas", "Microsoft JhengHei", "PingFang TC", sans-serif;
+            background: #eef1ec; color: #1a211b;
+        }
+        .topbar { background: linear-gradient(90deg, #3c4f3f, #222b23); color: #fff; padding: 14px 20px; display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+        .topbar h1 { font-size: 1.2rem; margin: 0; }
+        .topbar a { color: #c9d8c0; margin-left: 12px; text-decoration: none; font-size: 0.9rem; }
+        .topbar a:hover { text-decoration: underline; }
+        .container { max-width: 1000px; margin: 0 auto; padding: 16px 20px 50px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+        .panel { background: #fff; border: 1px solid #dee5da; border-radius: 10px; padding: 18px; }
+        .panel h3 { margin: 0 0 14px; font-size: 1rem; color: #39463b; }
+        .field { margin-bottom: 14px; }
+        .field label { display: block; font-size: 0.85rem; color: #4a574c; margin-bottom: 5px; font-weight: 600; }
+        .field input, .field select {
+            width: 100%; padding: 8px 10px; border: 1px solid #c3cfbf; border-radius: 6px; font-family: inherit; font-size: 0.95rem;
+        }
+        .hint { font-size: 0.76rem; color: #8a998c; margin-top: 4px; }
+        .btn { background: #5e7561; color: #fff; border: none; padding: 10px 18px; border-radius: 8px; font-size: 1rem; font-weight: 700; cursor: pointer; width: 100%; }
+        .btn:hover { background: #4a5d4e; }
+        .btn:disabled { background: #8a998c; cursor: not-allowed; }
+        .result-box { margin-top: 18px; border: 1px solid #dee5da; border-left: 4px solid #5e7561; border-radius: 8px; padding: 14px 16px; background: #f6f8f4; display: none; }
+        .result-box .row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.92rem; }
+        .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.82rem; font-weight: 700; }
+        .badge.buy { background: #edf3ea; color: #3f5a44; }
+        .badge.hold { background: #eef1ec; color: #4a574c; }
+        .model-info { font-size: 0.84rem; color: #68766a; background: #eef2ec; border: 1px solid #d7e0d3; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
+        .status { margin-top: 12px; padding: 8px 12px; border-radius: 6px; background: #eef2ec; color: #3f5a44; font-size: 0.86rem; }
+        .status.error { background: #fee2e2; color: #991b1b; }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <h1>策略設定 — {{ stock_name }}（{{ stock_code }}）</h1>
+        <a href="/stocks/{{ stock_code }}/">回決策看板</a>
+        <a href="/">回首頁</a>
+    </div>
+    <div class="container">
+        <div class="model-info" id="model-info">
+            最新模型版本：<b>{{ latest_model_version|default:"尚未訓練" }}</b>｜預設進場門檾：<b>{{ default_threshold_pct }}%</b>
+        </div>
+
+        <div class="grid">
+            <div class="panel">
+                <h3>AI 預測設定</h3>
+                <div class="field">
+                    <label for="model_type">AI 模型架構</label>
+                    <select id="model_type">
+                        {% for m in model_choices %}<option value="{{ m }}" {% if m == 'tft' %}selected{% endif %}>{{ m }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="threshold">AI 買進機率門檾 (%)  —  預設 {{ default_threshold_pct }}%</label>
+                    <input type="number" id="threshold" min="0" max="100" step="0.5" value="{{ default_threshold_pct }}">
+                    <div class="hint">特徵分數達到此門檾才觸發進場。</div>
+                </div>
+                    <button class="btn" id="btn-predict">進行 AI 預測</button>
+                <div class="status" id="status"></div>
+                <div class="result-box" id="result"></div>
+            </div>
+        </div>
+    </div>
+  <script>
+    const STOCK_CODE = "{{ stock_code }}";
+    // 跨頁面共用「預測模型」（與首頁 / 個股看板同步）
+    (function () {
+        var sel = document.getElementById("model_type");
+        var saved = localStorage.getItem("stock_ai_model_type");
+        if (sel && saved) {
+            for (var i = 0; i < sel.options.length; i++) { if (sel.options[i].value === saved) { sel.value = saved; break; } }
+        }
+        if (sel) sel.addEventListener("change", function () { localStorage.setItem("stock_ai_model_type", this.value); });
+    })();
+
+    function setStatus(msg, isErr = false) {
+        statusEl.textContent = msg;
+        statusEl.className = "status" + (isErr ? " error" : "");
+    }
+
+    document.getElementById("btn-predict").addEventListener("click", async () => {
+        const btn = document.getElementById("btn-predict");
+        btn.disabled = true;
+        setStatus("進行預測中，請稍候...");
+        try {
+            const resp = await fetch("/stocks/" + STOCK_CODE + "/prediction-settings/?model_type=" + document.getElementById("model_type").value);
+            const result = await resp.json();
+            if (!result.success) {
+                setStatus("預測失敗：" + result.message, true);
+                return;
+            }
+            const d = result.data || {};
+            const prob = (d.predicted_probability * 100).toFixed(2);
+            const buy = d.predicted_label === 1;
+            const badge = buy ? '<span class="badge buy">BUY 買進</span>' : '<span class="badge hold">HOLD 觀望</span>';
+            const box = document.getElementById("result");
+            box.style.display = "block";
+            box.innerHTML =
+                '<div class="row"><span>基準日期</span><b>' + (d.trade_date || "-") + '</b></div>' +
+                '<div class="row"><span>模型版本</span><b>' + (d.model_version || "-") + '</b></div>' +
+                '<div class="row"><span>突破機率</span><b>' + prob + '%</b></div>' +
+                '<div class="row"><span>決策</span>' + badge + '</div>' +
+                '<div class="hint" style="margin-top:8px;">' + (result.message || "") + '</div>';
+            setStatus("預測完成。");
+        } catch (e) {
+            setStatus("預測失敗：" + e.message, true);
+        } finally {
+            btn.disabled = false;
+        }
+    });
+</script>
+</body>
+</html>

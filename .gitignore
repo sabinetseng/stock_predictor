@@ -1,0 +1,17 @@
+# 機密設定，不可提交
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Django
+*.sqlite3
+staticfiles/
+
+# 模型檔案（訓練後產出，通常另外用版本管理工具存放）
+*.pkl
+*.joblib
+trained_models/

@@ -1,0 +1,29 @@
+# Web 框架與資料庫
+Django>=5.0,<6.0
+psycopg2-binary>=2.9
+django-environ>=0.11
+
+# 資料抓取（皆免費、不需要 API Token）
+FinMind>=2.0
+yfinance>=0.2
+
+# 技術指標
+TA-Lib>=0.4.28
+
+# 分析與模型
+pandas>=2.0
+numpy>=1.26
+scikit-learn>=1.4
+xgboost>=2.0
+lightgbm>=4.0
+scipy>=1.11
+joblib>=1.3
+
+# TFT（Temporal Fusion Transformer，選用：只有 model_type=tft 時才需要）
+# CPU 版即可：pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.0
+shap>=0.52
+
+# 排程（後續擴充用）
+celery>=5.3
+redis>=5.0
