@@ -90,7 +90,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "stock_predictor.wsgi.application"
 
-# 資料庫設定：使用 PostgreSQL（Render 部署時使用 DATABASE_URL 環境變數）
+# 資料庫設定：使用 PostgreSQL
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',

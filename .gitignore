@@ -15,3 +15,12 @@ staticfiles/
 *.pkl
 *.joblib
 trained_models/
+
+# 不需要上傳的檔案
+台股預測系統_期末簡報.pptx
+台股預測系統_期末簡報_包浩斯極簡版.pptx
+smoke_check.py
+test_runner.py
+full_project_test.py
+jpost_fix.py
+make_ppt_v2.py
