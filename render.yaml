@@ -1,0 +1,25 @@
+services:
+  # 1. 網頁伺服器設定
+  - type: web
+    name: stock-predictor
+    runtime: python
+    buildCommand: "./build.sh"
+    startCommand: gunicorn stock_predictor.wsgi:application
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: django-db
+          property: connectionString
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: WEB_CONCURRENCY
+        value: 4
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: ".onrender.com"
+
+databases:
+  # 2. 資料庫設定
+  - name: django-db
+    plan: free
