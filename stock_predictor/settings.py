@@ -90,25 +90,22 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "stock_predictor.wsgi.application"
 
-# 資料庫設定：使用 PostgreSQL，連線資訊從 .env 讀取
+# 資料庫設定：使用 PostgreSQL（Render 部署時使用 DATABASE_URL 環境變數）
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'stock_predictor',
+        'USER': 'postgres',
+        'PASSWORD': 'postgres',
+        'HOST': 'localhost',
+        'PORT': '5432',
     }
 }
 
-# postgresql資料庫設定
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': 'stock_predictor',         # 必須是在 pgAdmin 裡已經建立好的資料庫
-#         'USER': 'postgres',              # 這是使用者名稱
-#         'PASSWORD': 'postgres',
-#         'HOST': 'localhost',             # 這裡一定要是 localhost 或 127.0.0.1，不能是 postgres
-#         'PORT': '5432',
-#     }
-# }
+# Render 部署時自動使用 DATABASE_URL 環境變數
+db_from_env = dj_database_url.config(conn_max_age=600)
+if db_from_env:
+    DATABASES['default'].update(db_from_env)
 
 # MariaDB資料庫設定
 #  pip install mysqlclient
