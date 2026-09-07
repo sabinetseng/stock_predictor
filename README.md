@@ -73,7 +73,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'stock_predictor',         # 必須是在 pgAdmin 裡已經建立好的資料庫
         'USER': 'postgres',              # 這是使用者名稱
-        'PASSWORD': 'postgres',
+        'PASSWORD': 'your_password',
         'HOST': 'localhost',             # 這裡一定要是 localhost 或 127.0.0.1，不能是 postgres
         'PORT': '5432',
     }
