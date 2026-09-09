@@ -90,6 +90,10 @@ def _training_in_progress():
     """
     from datetime import timedelta
 
+    from .model_training import mark_stale_runs_failed
+
+    # 先清掉殭屍訓練（逾時無心跳），避免誤判「仍有訓練進行中」
+    mark_stale_runs_failed()
     cutoff = timezone.now() - timedelta(hours=6)
     return (ModelTrainingRun.objects
             .exclude(status__in=["completed", "failed"])
@@ -779,6 +783,9 @@ def stock_signals(request, stock_code):
 def list_training_runs(request):
     """列出所有訓練紀錄，支援分頁。"""
     try:
+        # 先把「逾時無心跳」的殭屍訓練標記為 failed，讓表格反映真實狀態
+        from .model_training import mark_stale_runs_failed
+        mark_stale_runs_failed()
         runs = ModelTrainingRun.objects.all().order_by("-created_at")
         page_size = int(request.GET.get("page_size", 20))
         page_num = int(request.GET.get("page", 1))
@@ -808,6 +815,13 @@ def list_training_runs(request):
                 "pr_auc_std": r.pr_auc_std,
                 "hyperparams": r.hyperparams or {},
                 "diagnostics": r.diagnostics or {},
+                # 背景訓練心跳：running 狀態時可用 heartbeat_seconds_ago 判斷
+                # 「還在算」（數值小且持續變動）或「已中斷」（超過 300 秒）
+                "heartbeat_at": _tw_iso(r.heartbeat_at),
+                "heartbeat_seconds_ago": (
+                    int((timezone.now() - r.heartbeat_at).total_seconds())
+                    if r.heartbeat_at else None
+                ),
             }
             for r in runs_page
         ]

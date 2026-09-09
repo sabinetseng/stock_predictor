@@ -435,6 +435,38 @@ def _require_torch():
         ) from exc
 
 
+STALE_RUN_MINUTES = 30
+
+
+def mark_stale_runs_failed():
+    """把「pending/running 但超過 30 分鐘無心跳」的訓練標記為 failed。
+
+    背景：背景訓練子行程會隨服務重新部署/重啟被殺，或（舊版同步訓練）被
+    gunicorn worker timeout 終止，紀錄會永遠停在 pending/running 成為殭屍。
+    以 heartbeat_at（無心跳的舊紀錄用 created_at）判斷，逾時自動標記 failed，
+    讓「歷史訓練紀錄」反映真實狀態、並解除「同時只能一個訓練」的佔用。
+    回傳標記筆數。
+    """
+    from datetime import timedelta
+
+    from django.db.models import Q
+
+    cutoff = timezone.now() - timedelta(minutes=STALE_RUN_MINUTES)
+    stale = ModelTrainingRun.objects.filter(status__in=["pending", "running"]).filter(
+        Q(heartbeat_at__lt=cutoff)
+        | Q(heartbeat_at__isnull=True, created_at__lt=cutoff)
+    )
+    marked = 0
+    for run in stale:
+        run.status = "failed"
+        note = (f"背景訓練中斷：超過 {STALE_RUN_MINUTES} 分鐘無心跳"
+                f"（可能為服務重新部署/重啟，或訓練程序被終止）")
+        run.notes = (run.notes + "；" if run.notes else "") + note
+        run.save(update_fields=["status", "notes"])
+        marked += 1
+    return marked
+
+
 def run_training(training_run_id):
     """
     執行一次模型訓練，對應一筆 ModelTrainingRun：
@@ -447,8 +479,27 @@ def run_training(training_run_id):
     """
     run = ModelTrainingRun.objects.get(id=training_run_id)
     run.status = "running"
-    run.save(update_fields=["status"])
+    run.heartbeat_at = timezone.now()
+    run.save(update_fields=["status", "heartbeat_at"])
     t_start = time.time()  # 訓練時間上限（TRAIN_TIMEOUT_SECONDS）的起算點
+
+    # ---------------------------------------------------------
+    # 心跳執行緒：訓練進行中每 60 秒更新一次 heartbeat_at，讓「歷史訓練紀錄」
+    # 能分辨「還在算」與「已死掉」（超過 30 分鐘無心跳會被 mark_stale_runs_failed
+    # 自動標記 failed）。訓練結束（成功或失敗）時以 stop_heartbeat 停止。
+    # ---------------------------------------------------------
+    import threading
+
+    stop_heartbeat = threading.Event()
+
+    def _heartbeat_loop():
+        while not stop_heartbeat.wait(60):
+            try:
+                ModelTrainingRun.objects.filter(id=run.id).update(heartbeat_at=timezone.now())
+            except Exception:  # noqa: BLE001
+                pass  # 心跳更新失敗不影響訓練
+
+    threading.Thread(target=_heartbeat_loop, daemon=True).start()
 
     # （可選）refit_on_all：由啟動端在「納入最新資料」模式下注入；
     # 先從 hyperparams 抽出此控制旗標，避免它被當成模型超參數傳入。
@@ -879,6 +930,8 @@ def run_training(training_run_id):
         auc_display = f"{auc:.4f}±{auc_std:.4f}" if auc is not None else "N/A"
         pr_auc_display = f"{pr_auc:.4f}±{pr_auc_std:.4f}" if pr_auc is not None else "N/A"
 
+        stop_heartbeat.set()
+
         return {
             "success": True,
             "message": (
@@ -894,6 +947,7 @@ def run_training(training_run_id):
         }
 
     except Exception as exc:  # noqa: BLE001
+        stop_heartbeat.set()
         run.status = "failed"
         run.notes = str(exc)
         run.save(update_fields=["status", "notes"])

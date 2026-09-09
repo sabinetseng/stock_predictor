@@ -14,10 +14,38 @@ ModelTrainingRun（完成後重新整理頁面即可查看）。
         --validation-start 2025-07-01 --validation-end 2026-06-30
 """
 import json
+import os
+import time
 
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.stocks.services import launch_walkforward_retrain, launch_full_pipeline_training
+
+
+def _start_keep_alive():
+    """Render 免費方案：15 分鐘沒有 HTTP 流量會休眠整個服務（背景訓練會被殺）。
+
+    有 RENDER_EXTERNAL_URL 時，以 daemon 執行緒每 4 分鐘打一次輕量端點，
+    讓平台持續偵測到流量，訓練期間服務不會被休眠。
+    """
+    external_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if not external_url:
+        return None
+
+    import threading
+    import urllib.request
+
+    def _ping_loop():
+        while True:
+            try:
+                urllib.request.urlopen(external_url + "/stocks/model-info/", timeout=15)
+            except Exception:  # noqa: BLE001
+                pass  # ping 失敗不影響訓練
+            time.sleep(240)
+
+    thread = threading.Thread(target=_ping_loop, daemon=True)
+    thread.start()
+    return thread
 
 
 class Command(BaseCommand):
@@ -44,6 +72,10 @@ class Command(BaseCommand):
         parser.add_argument("--validation-end", default=None)
 
     def handle(self, *args, **options):
+        # Render 免費方案防休眠：訓練期間持續製造 HTTP 流量
+        if _start_keep_alive() is not None:
+            self.stdout.write("keep-alive：已啟動（每 4 分鐘 ping，避免服務被休眠）")
+
         hyperparams = {}
         if options["hyperparams"]:
             try:

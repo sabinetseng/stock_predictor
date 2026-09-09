@@ -352,6 +352,10 @@ class ModelTrainingRun(models.Model):
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    # 背景訓練心跳：訓練進行中每 ~60 秒更新一次；超過 30 分鐘無心跳視為中斷
+    # （Render 重新部署/重啟會殺掉背景訓練子行程），由 mark_stale_runs_failed
+    # 自動標記 failed，避免殭屍紀錄永遠卡在 running。
+    heartbeat_at = models.DateTimeField(null=True, blank=True, verbose_name="最後心跳時間")
 
     class Meta:
         verbose_name = "模型訓練紀錄"
