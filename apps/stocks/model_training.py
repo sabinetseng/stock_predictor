@@ -781,6 +781,18 @@ def run_training(training_run_id):
         )
 
         # ---------------------------------------------------------
+        # 模型檔入庫備份（ModelArtifact）：Render 免費方案磁碟為暫態，重新部署／
+        # 重啟會清空 trained_models/，導致「已完成」訓練無法載入。訓練完成時把
+        # 檔案 bytes 存進資料庫，載入端（model_artifacts.get_model_file）在磁碟
+        # 檔遺失時自動從 DB 還原。入庫失敗不影響訓練結果（磁碟上仍有檔案）。
+        # ---------------------------------------------------------
+        try:
+            from .model_artifacts import store_artifact
+            store_artifact(run, model_file_path)
+        except Exception as _artifact_exc:  # noqa: BLE001
+            print(f"[model_artifacts] 模型檔入庫失敗（不影響訓練）：{_artifact_exc}")
+
+        # ---------------------------------------------------------
         # 特徵重要性（MODEL_TUNING_GUIDE.md 五-4）：僅樹模型有原生重要性——
         # LightGBM 預設 split（特徵被使用次數）、XGBoost 預設 gain（帶來的增益）；
         # TFT 無原生重要性，記錄空清單。存進 ModelTrainingRun.feature_importance

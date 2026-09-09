@@ -77,11 +77,13 @@ def pick_diag_run(model_type=None, model_version=None, stock_code=""):
         qs = qs.filter(model_version=model_version)
     if stock_code:
         qs = qs.filter(stock_codes__contains=stock_code)
+    from .model_artifacts import model_file_available
+
     for run in qs.order_by("-completed_at", "-id")[:20]:
-        if run.model_file_path and os.path.exists(run.model_file_path):
+        if model_file_available(run):
             return run, None
     return None, (
-        "找不到可診斷的已完成模型（模型檔已不在 trained_models/ 的紀錄會自動跳過）。"
+        "找不到可診斷的已完成模型（模型檔遺失且資料庫無入庫備份的紀錄會自動跳過）。"
         "請先用 train_model／一鍵重訓練完成一次訓練。"
     )
 
@@ -163,7 +165,9 @@ def diagnose_trees(run):
     # 這是已知且已處理的行為（下面 sv 解包處已相容 list），純噪音，抑制掉讓輸出乾淨。
     warnings.filterwarnings("ignore", category=UserWarning, module="shap")
 
-    bundle = joblib.load(run.model_file_path)
+    from .model_artifacts import get_model_file
+
+    bundle = joblib.load(get_model_file(run))
     model = bundle["model"]
     cols = [str(c) for c in bundle.get("feature_columns", [])]
     if not cols:
@@ -244,7 +248,9 @@ def diagnose_tft(run, time_budget=TFT_TIME_BUDGET):
     import time as _time
     import joblib
 
-    bundle = joblib.load(run.model_file_path)
+    from .model_artifacts import get_model_file
+
+    bundle = joblib.load(get_model_file(run))
     model = bundle["model"]
     cols = [str(c) for c in bundle.get("feature_columns", [])]
     if not cols:
@@ -533,8 +539,10 @@ def attach_auto_diagnosis(run, time_budget=None):
     """
     if run.model_type not in ("lightgbm", "xgboost", "tft"):
         return f"未知模型類型 {run.model_type}，跳過自動診斷"
-    if not run.model_file_path or not os.path.exists(run.model_file_path):
-        return "模型檔不存在，無法自動診斷"
+    from .model_artifacts import model_file_available
+
+    if not model_file_available(run):
+        return "模型檔不存在（且資料庫無入庫備份），無法自動診斷"
     try:
         diag = (
             diagnose_trees(run)

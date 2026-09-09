@@ -359,3 +359,29 @@ class ModelTrainingRun(models.Model):
 
     def __str__(self):
         return f"{self.model_version} [{self.train_start}~{self.train_end}] -> [{self.validation_start}~{self.validation_end}]"
+
+
+class ModelArtifact(models.Model):
+    """訓練完成模型檔的入庫備份。
+
+    Render 免費方案磁碟為暫態，trained_models/ 會在重新部署／重啟時被清空；
+    把模型檔 bytes 存進資料庫，載入端（model_artifacts.get_model_file）在
+    磁碟檔遺失時自動還原，讓「已完成」的訓練持續可用（預測／診斷／回測）。
+    """
+
+    run = models.OneToOneField(
+        ModelTrainingRun, on_delete=models.CASCADE, related_name="artifact",
+        verbose_name="對應的訓練紀錄",
+    )
+    file_name = models.CharField(max_length=500, verbose_name="模型檔名")
+    content = models.BinaryField(verbose_name="模型檔內容（joblib bytes）")
+    size_bytes = models.IntegerField(default=0, verbose_name="檔案大小（bytes）")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="入庫時間")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新時間")
+
+    class Meta:
+        verbose_name = "模型檔入庫備份"
+        verbose_name_plural = verbose_name
+
+    def __str__(self):
+        return f"{self.file_name}（{self.size_bytes} bytes）"

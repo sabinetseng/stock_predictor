@@ -116,10 +116,12 @@ def pick_run(model_type=None, model_version=None, stock_code=None,
         if latest_stock is not None:
             latest_px = max(latest_px, latest_stock)
 
+    from .model_artifacts import model_file_available
+
     for run in runs:
-        if not run.model_file_path or not os.path.exists(run.model_file_path):
+        if not model_file_available(run):
             missing += 1
-            continue  # 模型檔已被清掉（FILE_MISSING）的紀錄無法載入，跳過
+            continue  # 模型檔遺失且資料庫無入庫備份（FILE_MISSING）的紀錄無法載入，跳過
         blind_start = run.validation_end + datetime.timedelta(days=1)
         if use_validation:
             return run, run.validation_start, run.validation_end
@@ -335,7 +337,9 @@ def run_backtest(stock_code, model_type=None, threshold=DEFAULT_THRESHOLD,
         raise ValueError(p_start)
 
     import joblib
-    bundle = joblib.load(run.model_file_path)
+
+    from .model_artifacts import get_model_file
+    bundle = joblib.load(get_model_file(run))
 
     prices = fetch_price_frame(stock, p_start, p_end)
     if prices.empty:

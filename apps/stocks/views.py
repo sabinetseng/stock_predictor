@@ -971,6 +971,8 @@ def feature_importance(request):
             # 欄位上線前訓練的舊紀錄沒有記錄 → 從已存的模型檔（joblib）補算一次並快取回 DB
             import os  # noqa: F401
             import joblib
+
+            from .model_artifacts import get_model_file, model_file_available
             runs = list(ModelTrainingRun.objects.filter(
                 status="completed", model_type__in=("lightgbm", "xgboost"),
             ).order_by("-completed_at")[:20])
@@ -979,9 +981,9 @@ def feature_importance(request):
                 if r.feature_importance:
                     run = r
                     break
-                if r.model_file_path and os.path.exists(r.model_file_path):
+                if model_file_available(r):
                     try:
-                        bundle = joblib.load(r.model_file_path)
+                        bundle = joblib.load(get_model_file(r))
                         model_obj = bundle.get("model")
                         cols = bundle.get("feature_columns") or []
                         imp = getattr(model_obj, "feature_importances_", None)

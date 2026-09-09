@@ -1391,13 +1391,16 @@ def compute_history_signals(stock_code, lookback_days=250, threshold_override=No
         result["message"] = f"找不到股票 {stock_code}"
         return result
 
-    import os as _os
     import joblib
-    if not _os.path.exists(latest_run.model_file_path):
-        result["message"] = "模型檔案遺失，請重新訓練"
+
+    from .model_artifacts import get_model_file
+    try:
+        model_path = get_model_file(latest_run)
+    except FileNotFoundError as exc:
+        result["message"] = f"模型檔案遺失，請重新訓練（{exc}）"
         return result
 
-    bundle = joblib.load(latest_run.model_file_path)
+    bundle = joblib.load(model_path)
     model = bundle["model"]
     feat_all = bundle.get("feature_columns") or FEATURE_COLUMNS
     # ETF／指標型標的沒有月營收：該欄位對此標的「結構性不可得」，以 NaN 傳入模型
@@ -2047,7 +2050,9 @@ def predict(stock_code, model_type=None):
     has_monthly = StockFeatureMonthly.objects.filter(stock=stock).exists()
 
     import joblib
-    bundle = joblib.load(latest_run.model_file_path)
+
+    from .model_artifacts import get_model_file
+    bundle = joblib.load(get_model_file(latest_run))
     model = bundle["model"]
     feat_order = bundle.get("feature_columns") or FEATURE_COLUMNS
 
