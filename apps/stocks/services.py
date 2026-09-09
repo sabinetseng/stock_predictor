@@ -1588,7 +1588,8 @@ def compute_walkforward_split(stock_codes=None, train_ratio=0.6, val_ratio=0.2,
 def launch_walkforward_retrain(stock_codes_text="", model_type="lightgbm",
                                label_version="advanced", n_repeats=1,
                                hyperparams=None, dry_run=False,
-                               lookback_years=None, include_latest=False):
+                               lookback_years=None, include_latest=False,
+                               existing_run_id=None):
     """完整管線式重訓練：**同步資料 → 建立特徵 → 建立標籤 → 訓練**。
 
     與「自選日期一鍵訓練」相同的一口氣流程，差別只在切分方式：
@@ -1598,6 +1599,8 @@ def launch_walkforward_retrain(stock_codes_text="", model_type="lightgbm",
     - include_latest：True 時驗證區間延伸至資料庫最新日，並自動注入 refit_on_all——
       最終模型以「訓練＋驗證」全部資料重新擬合，學到最新市場（評估指標仍用原切分）。
     - dry_run=True 時只預覽步驟與切割日期、不寫入任何紀錄（供前端預覽與測試）。
+    - existing_run_id：網頁背景按鈕模式預先建立的 pending run id（見
+      create_pipeline_run_record）；由子行程傳入，沿用該筆紀錄進行訓練。
     """
     code_list = [c.strip() for c in (stock_codes_text or "").split(",") if c.strip()]
     if not code_list:
@@ -1704,10 +1707,16 @@ def launch_walkforward_retrain(stock_codes_text="", model_type="lightgbm",
     if train_end >= val_start:
         raise ValueError(f"資料天數太少，切不出訓練/驗證區間（{dates_payload}）")
 
-    # ---- 步驟⑤ 建立並執行訓練 ----
+    # ---- 步驟⑤ 建立（或沿用預先建立）並執行訓練 ----
+    _existing_run = None
+    if existing_run_id:
+        _existing_run = ModelTrainingRun.objects.filter(id=existing_run_id).first()
+        if _existing_run is None:
+            raise ValueError(f"找不到預先建立的訓練紀錄 id={existing_run_id}（可能已被清除），請重新啟動")
     run, launched_msg, run_status, metrics = _finalize_pipeline_run(
         stock_codes_text, model_type, label_version, n_repeats,
         hp, train_start, train_end, val_start, val_end,
+        existing_run=_existing_run,
     )
 
     step_summary = (
@@ -1770,7 +1779,7 @@ def _validate_custom_dates(dates):
 def launch_full_pipeline_training(stock_codes_text="", model_type="lightgbm",
                                   label_version="advanced", n_repeats=1,
                                   hyperparams=None, include_latest=False,
-                                  dates=None, dry_run=False):
+                                  dates=None, dry_run=False, existing_run_id=None):
     """一鍵完整訓練管線（自選日期）：同步資料 → 建立特徵 → 建立標籤 → 建立並執行訓練。
 
     dates（必要，自選日期模式）：dict 含四個日期 → 完全依使用者自選切分。
@@ -1778,6 +1787,8 @@ def launch_full_pipeline_training(stock_codes_text="", model_type="lightgbm",
       launch_walkforward_retrain（首頁「一鍵重訓練」按鈕）。
     dry_run=True：唯讀預覽——只計算/驗證切分，不做任何同步、寫入或訓練。
     include_latest=True：驗證區間延伸到資料庫最新交易日並注入 refit_on_all。
+    existing_run_id：網頁背景按鈕模式預先建立的 pending run id（見
+      create_pipeline_run_record），沿用該筆紀錄進行訓練。
     容錯原則：單一股票失敗只記錄不中斷，某一步全部股票都失敗才中止。
     """
     code_list = [c.strip() for c in (stock_codes_text or "").split(",") if c.strip()]
@@ -1832,6 +1843,7 @@ def launch_full_pipeline_training(stock_codes_text="", model_type="lightgbm",
         code_list, model_type=model_type, label_version=label_version,
         n_repeats=n_repeats, hp=hp, dates_payload=dates_payload,
         split_mode=split_mode, stock_codes_text=stock_codes_text,
+        existing_run_id=existing_run_id,
     )
 
 
@@ -1871,18 +1883,23 @@ def _labels_pipeline_step(code_list, label_version):
     return label_ok, label_fail
 
 
-def _finalize_pipeline_run(stock_codes_text, model_type, label_version, n_repeats,
-                           hp, train_start, train_end, val_start, val_end):
-    """管線步驟④：建立 ModelTrainingRun 並執行訓練（同步或 TRAINING_ASYNC 非同步）。
-    回傳 (run, launched_msg, run_status, metrics)。"""
+def create_pipeline_run_record(stock_codes_text, model_type, label_version, n_repeats,
+                               hp, train_start, train_end, val_start, val_end):
+    """僅「建立」一筆 pending 的 ModelTrainingRun，不執行訓練。
+
+    背景：網頁按鈕要在背景子行程真正跑之前，就先建立一筆訓練紀錄——
+    這樣使用者按下按鈕後「立刻」可以在歷史訓練紀錄看到這筆（隨子行程
+    的進度由 pending → running → completed/failed），而不是等到整個管線
+    跑完才出現。與 _finalize_pipeline_run 的建立邏輯保持一致（版本命名
+    重複時加時間戳）。
+    """
     base_version = f"v_{model_type}_{train_start}_{train_end}_val_{val_start}_{val_end}"
     version = base_version
     if ModelTrainingRun.objects.filter(model_version=version).exists():
-        # 同一天對同一組邊界重複重訓時加上時間戳，避免 version 重複
         from django.utils import timezone as _tz
         version = f"{base_version}_r{_tz.now().strftime('%Y%m%d%H%M%S')}"
 
-    run = ModelTrainingRun.objects.create(
+    return ModelTrainingRun.objects.create(
         train_start=train_start,
         train_end=train_end,
         validation_start=val_start,
@@ -1895,6 +1912,41 @@ def _finalize_pipeline_run(stock_codes_text, model_type, label_version, n_repeat
         n_repeats=max(1, int(n_repeats)),
         status="pending",
     )
+
+
+def _finalize_pipeline_run(stock_codes_text, model_type, label_version, n_repeats,
+                           hp, train_start, train_end, val_start, val_end,
+                           existing_run=None):
+    """管線步驟④：建立（或沿用既有）ModelTrainingRun 並執行訓練。
+
+    existing_run：背景按鈕模式預先建立的 pending run（見 create_pipeline_run_record）。
+    - 為 None：新建（原本行為）。
+    - 非 None：沿用該 run；管線最終計算出的日期欄位會覆蓋預估值（因為 walkforward
+      的切分是在同步資料後才重算的），確保紀錄與實際訓練一致。
+    回傳 (run, launched_msg, run_status, metrics)。
+    """
+    if existing_run is not None:
+        run = existing_run
+        run.train_start = train_start
+        run.train_end = train_end
+        run.validation_start = val_start
+        run.validation_end = val_end
+        run.model_type = model_type
+        run.stock_codes = stock_codes_text or ""
+        run.label_version = label_version
+        run.hyperparams = hp
+        run.n_repeats = max(1, int(n_repeats))
+        run.status = "pending"
+        run.save(update_fields=[
+            "train_start", "train_end", "validation_start", "validation_end",
+            "model_type", "stock_codes", "label_version", "hyperparams",
+            "n_repeats", "status",
+        ])
+    else:
+        run = create_pipeline_run_record(
+            stock_codes_text, model_type, label_version, n_repeats,
+            hp, train_start, train_end, val_start, val_end,
+        )
 
     from django.conf import settings as dj_settings
     if getattr(dj_settings, "TRAINING_ASYNC", False):
@@ -1914,7 +1966,8 @@ def _finalize_pipeline_run(stock_codes_text, model_type, label_version, n_repeat
 
 
 def _run_full_pipeline(code_list, model_type, label_version, n_repeats,
-                       hp, dates_payload, split_mode, stock_codes_text):
+                       hp, dates_payload, split_mode, stock_codes_text,
+                       existing_run_id=None):
     """launch_full_pipeline_training 的實際執行段（dry-run 不會走到這裡）。"""
     pipeline_notes = []
 
@@ -1964,9 +2017,16 @@ def _run_full_pipeline(code_list, model_type, label_version, n_repeats,
     val_start = dates_payload["validation_start"]
     val_end = dates_payload["validation_end"]
 
+    _existing_run = None
+    if existing_run_id:
+        from .models import ModelTrainingRun as _MTR
+        _existing_run = _MTR.objects.filter(id=existing_run_id).first()
+        if _existing_run is None:
+            raise ValueError(f"找不到預先建立的訓練紀錄 id={existing_run_id}（可能已被清除），請重新啟動")
     run, launched_msg, run_status, metrics = _finalize_pipeline_run(
         stock_codes_text, model_type, label_version, n_repeats,
         hp, train_start, train_end, val_start, val_end,
+        existing_run=_existing_run,
     )
 
     step_summary = (

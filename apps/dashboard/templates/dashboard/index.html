@@ -551,6 +551,17 @@
             showStatus._timer = setTimeout(() => box.classList.remove("show"), isError ? 15000 : 6000);
         }
 
+        // 把「伺服器沒有正常回應」的錯誤翻譯成可懂訊息：JSON 解析失敗通常是
+        // Render 免費服務休眠後首次請求的冷啟動（可能等 30~60 秒）、部署中 502、
+        // 或逾時中斷——都不是使用者操作錯誤。
+        function friendlyFetchError(err) {
+            const msg = (err && err.message) || String(err);
+            if (/JSON|Unexpected token|Unexpected end|parse/i.test(msg)) {
+                return "伺服器沒有回應（可能服務正在冷啟動或部署中）。請等 1～2 分鐘後重新整理頁面再按一次；若「歷史訓練紀錄」出現新的 failed 紀錄，代表背景訓練啟動失敗。";
+            }
+            return msg;
+        }
+
         // 把需要長期保留的訊息（例如重訓練／建立訓練的完成摘要）寫進「最新訓練結果摘要」卡片；
         // Toast 只會浮現幾秒，這裡寫入的文字會一直留在畫面上供隨時查看
         function setTrainingSummaryText(text) {
@@ -1146,7 +1157,7 @@ function updateTrainingInfoCard() {
                     await refreshTrainingRunsTable(1);
                 }
             } catch (err) {
-                showStatus("重訓練失敗：" + err.message, true);
+                showStatus("重訓練失敗：" + friendlyFetchError(err), true);
             } finally {
                 btnWfr.disabled = false;
             }
@@ -1216,7 +1227,7 @@ function updateTrainingInfoCard() {
                     await refreshTrainingRunsTable(1);
                 }
             } catch (err) {
-                showStatus("一鍵管線失敗：" + err.message, true);
+                showStatus("一鍵管線失敗：" + friendlyFetchError(err), true);
             } finally {
                 btn.disabled = false;
             }

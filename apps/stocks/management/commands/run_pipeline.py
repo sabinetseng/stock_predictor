@@ -54,6 +54,8 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--mode", default="walkforward", choices=["walkforward", "custom"],
                             help="walkforward＝最新資料 60/20/20；custom＝自選四個日期")
+        parser.add_argument("--run-id", type=int, default=None,
+                            help="網頁按鈕預先建立的 pending ModelTrainingRun id（沿用該筆紀錄執行）")
         parser.add_argument("--stock-codes", default="",
                             help="逗號分隔的股票代碼，留空代表全部股票")
         parser.add_argument("--model-type", default="lightgbm",
@@ -96,6 +98,7 @@ class Command(BaseCommand):
                 lookback_years=options["lookback_years"],
                 include_latest=options["include_latest"],
                 dry_run=False,
+                existing_run_id=options["run_id"],
                 **common,
             )
         else:
@@ -106,6 +109,7 @@ class Command(BaseCommand):
             result = launch_full_pipeline_training(
                 dates={k: options[k] for k in date_keys},
                 include_latest=options["include_latest"],
+                existing_run_id=options["run_id"],
                 **common,
             )
 

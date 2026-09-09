@@ -109,12 +109,13 @@ def _pipeline_busy_response():
     }, status=409)
 
 
-def _background_started_response(model_type, pid, log_file):
+def _background_started_response(model_type, pid, log_file, run_id=None):
     return JsonResponse({
         "success": True,
-        "message": (f"已於背景開始訓練（{model_type}）：同步資料→建立特徵→建立標籤→訓練。"
-                    "首次訓練需數分鐘（TFT 更久），完成後重新整理頁面即可在「歷史訓練紀錄」查看結果。"),
-        "data": {"background": True, "model_type": model_type, "pid": pid, "log_file": log_file},
+        "message": (f"已於背景開始訓練（{model_type}，紀錄 #{run_id}）：同步資料→建立特徵→建立標籤→訓練。"
+                    "首次訓練需數分鐘（TFT 更久），可重新整理頁面在「歷史訓練紀錄」查看進度；"
+                    "完成後模型會自動入庫。"),
+        "data": {"background": True, "run_id": run_id, "model_type": model_type, "pid": pid, "log_file": log_file},
     })
 
 
@@ -633,8 +634,20 @@ def walkforward_retrain(request):
         except (TypeError, ValueError):
             return JsonResponse({"success": False, "message": f"n_repeats 必須是整數，收到：{n_repeats!r}", "data": None}, status=400)
 
+        # 先以預檢的切分建立一筆 pending 訓練紀錄——使用者按下按鈕「立刻」能在
+        # 歷史訓練紀錄看到這筆；背景子行程接 run-id 執行，中途失敗也有紀錄可查
+        # （超過 30 分鐘無心跳會被自動標記 failed）。
+        from .services import create_pipeline_run_record
+        _preview = result.get("data") or {}
+        run = create_pipeline_run_record(
+            payload.get("stock_codes", ""),
+            model_type, label_version, n_repeats, dict(hyperparams),
+            _preview.get("train_start"), _preview.get("train_end"),
+            _preview.get("validation_start"), _preview.get("validation_end"),
+        )
+
         cli_args = [
-            "run_pipeline", "--mode", "walkforward",
+            "run_pipeline", "--mode", "walkforward", "--run-id", str(run.id),
             "--stock-codes", str(payload.get("stock_codes", "")),
             "--model-type", model_type,
             "--label-version", label_version,
@@ -647,8 +660,14 @@ def walkforward_retrain(request):
         if hyperparams:
             cli_args += ["--hyperparams", json.dumps(hyperparams, ensure_ascii=False)]
 
-        pid, log_file = _spawn_background_pipeline(cli_args)
-        return _background_started_response(model_type, pid, log_file)
+        try:
+            pid, log_file = _spawn_background_pipeline(cli_args)
+        except Exception as exc:  # noqa: BLE001
+            run.status = "failed"
+            run.notes = f"背景啟動失敗：{type(exc).__name__}: {exc}"
+            run.save(update_fields=["status", "notes"])
+            raise
+        return _background_started_response(model_type, pid, log_file, run_id=run.id)
     except ValueError as exc:
         return JsonResponse({"success": False, "message": str(exc), "data": None}, status=400)
     except Exception as exc:  # noqa: BLE001
@@ -715,8 +734,18 @@ def full_pipeline_train(request):
         except (TypeError, ValueError):
             return JsonResponse({"success": False, "message": f"n_repeats 必須是整數，收到：{n_repeats!r}", "data": None}, status=400)
 
+        # 先建立一筆 pending 訓練紀錄（同「一鍵重訓練」：讓使用者在歷史訓練紀錄
+        # 立刻看到這筆，子行程中途失敗也有紀錄可查）
+        from .services import create_pipeline_run_record
+        run = create_pipeline_run_record(
+            payload.get("stock_codes", ""),
+            model_type, label_version, n_repeats, dict(hyperparams),
+            dates.get("train_start"), dates.get("train_end"),
+            dates.get("validation_start"), dates.get("validation_end"),
+        )
+
         cli_args = [
-            "run_pipeline", "--mode", "custom",
+            "run_pipeline", "--mode", "custom", "--run-id", str(run.id),
             "--stock-codes", str(payload.get("stock_codes", "")),
             "--model-type", model_type,
             "--label-version", label_version,
@@ -731,8 +760,14 @@ def full_pipeline_train(request):
         if hyperparams:
             cli_args += ["--hyperparams", json.dumps(hyperparams, ensure_ascii=False)]
 
-        pid, log_file = _spawn_background_pipeline(cli_args)
-        return _background_started_response(model_type, pid, log_file)
+        try:
+            pid, log_file = _spawn_background_pipeline(cli_args)
+        except Exception as exc:  # noqa: BLE001
+            run.status = "failed"
+            run.notes = f"背景啟動失敗：{type(exc).__name__}: {exc}"
+            run.save(update_fields=["status", "notes"])
+            raise
+        return _background_started_response(model_type, pid, log_file, run_id=run.id)
     except ValueError as exc:
         return JsonResponse({"success": False, "message": str(exc), "data": None}, status=400)
     except Exception as exc:  # noqa: BLE001
