@@ -4,7 +4,7 @@ services:
     name: stock-predictor
     runtime: python
     buildCommand: "./build.sh"
-    startCommand: gunicorn stock_predictor.wsgi:application
+    startCommand: "gunicorn stock_predictor.wsgi:application --bind 0.0.0.0:$PORT"
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.10"

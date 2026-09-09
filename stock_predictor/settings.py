@@ -39,8 +39,7 @@ environ.Env.read_env(BASE_DIR / ".env")
 
 SECRET_KEY = env("DJANGO_SECRET_KEY", default="請在正式環境改成隨機字串")
 DEBUG = env("DEBUG")
-ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
-ALLOWED_HOSTS = ['192.168.1.102', '127.0.0.1', 'localhost']
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1", "192.168.1.102", ".onrender.com"])
 
 # 已安裝的 App
 INSTALLED_APPS = [
@@ -61,6 +60,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # 讓 gunicorn（DEBUG=False）直接服務 static 檔案，Render 上不需要另外的靜態主機
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
