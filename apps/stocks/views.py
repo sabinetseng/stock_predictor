@@ -51,6 +51,69 @@ def _shap_summary_from_run(run):
     }
 
 
+def _spawn_background_pipeline(cli_args):
+    """以「分離子行程」執行 manage.py run_pipeline ...，讓 HTTP 請求立即返回。
+
+    訓練（尤其 TFT）遠超過 HTTP 請求合理時長，同步執行會讓 gunicorn worker
+    因 timeout 被殺、前端收到空回應（Failed to execute 'json' on 'Response'）。
+    改由背景子行程執行，stdout/stderr 導到 training_logs/ 下的日誌檔，
+    訓練結果照常寫入 ModelTrainingRun（完成後重新整理頁面即可查看）。
+    """
+    import sys
+    import uuid
+    import subprocess
+    from pathlib import Path
+    from django.conf import settings
+
+    base_dir = Path(settings.BASE_DIR)
+    log_dir = base_dir / "training_logs"
+    log_dir.mkdir(exist_ok=True)
+    log_path = log_dir / f"pipeline_{_dt.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}.log"
+    with open(log_path, "ab") as logf:
+        logf.write(f"===== {_dt.now():%Y-%m-%d %H:%M:%S} {' '.join(cli_args)} =====\n".encode("utf-8", "ignore"))
+        logf.flush()
+        proc = subprocess.Popen(
+            [sys.executable, str(base_dir / "manage.py"), *cli_args],
+            cwd=str(base_dir),
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    return proc.pid, str(log_path)
+
+
+def _training_in_progress():
+    """是否已有訓練進行中（6 小時內建立、狀態不是 completed/failed 的訓練紀錄）。
+
+    只看近 6 小時：若背景子行程隨容器重啟被殺、紀錄永遠停在 pending/training，
+    舊紀錄不該永久卡死「只能同時一個訓練」的保護。
+    """
+    from datetime import timedelta
+
+    cutoff = timezone.now() - timedelta(hours=6)
+    return (ModelTrainingRun.objects
+            .exclude(status__in=["completed", "failed"])
+            .filter(created_at__gte=cutoff)
+            .exists())
+
+
+def _pipeline_busy_response():
+    return JsonResponse({
+        "success": False,
+        "message": "已有訓練正在執行中。請等它完成後再啟動新的訓練（可重新整理頁面，在「歷史訓練紀錄」查看目前狀態）。",
+        "data": None,
+    }, status=409)
+
+
+def _background_started_response(model_type, pid, log_file):
+    return JsonResponse({
+        "success": True,
+        "message": (f"已於背景開始訓練（{model_type}）：同步資料→建立特徵→建立標籤→訓練。"
+                    "首次訓練需數分鐘（TFT 更久），完成後重新整理頁面即可在「歷史訓練紀錄」查看結果。"),
+        "data": {"background": True, "model_type": model_type, "pid": pid, "log_file": log_file},
+    })
+
+
 def model_info(request):
     """
     列出支援的預測模型類型及其描述、特徵處理方式、超參數說明與全部特徵的中文描述。
@@ -522,23 +585,66 @@ def walkforward_retrain(request):
         model_type / label_version / n_repeats / hyperparams：同 create_training_run
         lookback_years / include_latest：同 launch_walkforward_retrain
         dry_run: true 時只預覽步驟與切割日期，不真的同步/寫入/訓練
+
+    真正訓練（dry_run=false）改為「背景子行程」執行：訓練（尤其 TFT）遠超過
+    HTTP 請求合理時長，同步執行會讓 gunicorn worker 逾時被殺、前端收到空回應。
+    本端點先做唯讀預檢（參數/切分驗證，錯誤立刻回 400），通過後立即返回
+    「已於背景開始訓練」，結果照常寫入 ModelTrainingRun。
     """
     try:
         try:
             payload = json.loads(request.body or b"{}")
         except json.JSONDecodeError:
             payload = {}
+        model_type = payload.get("model_type", "lightgbm")
+        label_version = payload.get("label_version", "advanced")
+        n_repeats = payload.get("n_repeats", 1)
+        hyperparams = payload.get("hyperparams") or {}
+        lookback_years = payload.get("lookback_years") or None
+        include_latest = bool(payload.get("include_latest", False))
+        dry_run = bool(payload.get("dry_run", False))
+
+        # 唯讀預檢（與 dry-run 相同的驗證與切分預覽）：參數錯誤立刻回應，不用等背景行程
         result = services.launch_walkforward_retrain(
             stock_codes_text=payload.get("stock_codes", ""),
-            model_type=payload.get("model_type", "lightgbm"),
-                        label_version=payload.get("label_version", "advanced"),
-            n_repeats=payload.get("n_repeats", 1),
-            hyperparams=payload.get("hyperparams") or {},
-            dry_run=bool(payload.get("dry_run", False)),
-            lookback_years=payload.get("lookback_years") or None,
-            include_latest=bool(payload.get("include_latest", False)),
+            model_type=model_type,
+            label_version=label_version,
+            n_repeats=n_repeats,
+            hyperparams=hyperparams,
+            dry_run=True,
+            lookback_years=lookback_years,
+            include_latest=include_latest,
         )
-        return JsonResponse(result)
+        if dry_run:
+            return JsonResponse(result)
+        if not result.get("success"):
+            return JsonResponse(result, status=400)
+
+        if model_type not in ("lightgbm", "xgboost", "tft"):
+            return JsonResponse({"success": False, "message": f"不支援的模型類型：{model_type}", "data": None}, status=400)
+        if _training_in_progress():
+            return _pipeline_busy_response()
+        try:
+            n_repeats = int(n_repeats)
+        except (TypeError, ValueError):
+            return JsonResponse({"success": False, "message": f"n_repeats 必須是整數，收到：{n_repeats!r}", "data": None}, status=400)
+
+        cli_args = [
+            "run_pipeline", "--mode", "walkforward",
+            "--stock-codes", str(payload.get("stock_codes", "")),
+            "--model-type", model_type,
+            "--label-version", label_version,
+            "--n-repeats", str(n_repeats),
+        ]
+        if lookback_years:
+            cli_args += ["--lookback-years", str(lookback_years)]
+        if include_latest:
+            cli_args += ["--include-latest"]
+        if hyperparams:
+            cli_args += ["--hyperparams", json.dumps(hyperparams, ensure_ascii=False)]
+
+        pid, log_file = _spawn_background_pipeline(cli_args)
+        return _background_started_response(model_type, pid, log_file)
     except ValueError as exc:
         return JsonResponse({"success": False, "message": str(exc), "data": None}, status=400)
     except Exception as exc:  # noqa: BLE001
@@ -563,6 +669,9 @@ def full_pipeline_train(request):
 
     註：已移除「全自動模式」（dates 缺略自動 60/20/20）——需要最新 60/20/20
         一鍵訓練請改用「一鍵重訓練」：POST /stocks/walkforward-retrain/
+
+    真正訓練（dry_run=false）與「一鍵重訓練」相同改為背景子行程執行：
+    先做唯讀預檢（dates 齊全性/切分驗證，錯誤立刻回 400），通過後立即返回。
     """
     try:
         try:
@@ -570,17 +679,56 @@ def full_pipeline_train(request):
         except json.JSONDecodeError:
             payload = {}
         dates = payload.get("dates") or None
+        model_type = payload.get("model_type", "lightgbm")
+        label_version = payload.get("label_version", "advanced")
+        n_repeats = payload.get("n_repeats", 1)
+        hyperparams = payload.get("hyperparams") or {}
+        include_latest = bool(payload.get("include_latest", False))
+        dry_run = bool(payload.get("dry_run", False))
+
+        # 唯讀預檢：dates 缺略/格式錯誤/切分不合法等問題立刻回 400（與原本行為一致）
         result = services.launch_full_pipeline_training(
             stock_codes_text=payload.get("stock_codes", ""),
-            model_type=payload.get("model_type", "lightgbm"),
-            label_version=payload.get("label_version", "advanced"),
-            n_repeats=payload.get("n_repeats", 1),
-            hyperparams=payload.get("hyperparams") or {},
-            include_latest=bool(payload.get("include_latest", False)),
+            model_type=model_type,
+            label_version=label_version,
+            n_repeats=n_repeats,
+            hyperparams=hyperparams,
+            include_latest=include_latest,
             dates=dates,
-            dry_run=bool(payload.get("dry_run", False)),
+            dry_run=True,
         )
-        return JsonResponse(result)
+        if dry_run:
+            return JsonResponse(result)
+        if not result.get("success"):
+            return JsonResponse(result, status=400)
+
+        if model_type not in ("lightgbm", "xgboost", "tft"):
+            return JsonResponse({"success": False, "message": f"不支援的模型類型：{model_type}", "data": None}, status=400)
+        if _training_in_progress():
+            return _pipeline_busy_response()
+        try:
+            n_repeats = int(n_repeats)
+        except (TypeError, ValueError):
+            return JsonResponse({"success": False, "message": f"n_repeats 必須是整數，收到：{n_repeats!r}", "data": None}, status=400)
+
+        cli_args = [
+            "run_pipeline", "--mode", "custom",
+            "--stock-codes", str(payload.get("stock_codes", "")),
+            "--model-type", model_type,
+            "--label-version", label_version,
+            "--n-repeats", str(n_repeats),
+            "--train-start", str(dates.get("train_start", "")),
+            "--train-end", str(dates.get("train_end", "")),
+            "--validation-start", str(dates.get("validation_start", "")),
+            "--validation-end", str(dates.get("validation_end", "")),
+        ]
+        if include_latest:
+            cli_args += ["--include-latest"]
+        if hyperparams:
+            cli_args += ["--hyperparams", json.dumps(hyperparams, ensure_ascii=False)]
+
+        pid, log_file = _spawn_background_pipeline(cli_args)
+        return _background_started_response(model_type, pid, log_file)
     except ValueError as exc:
         return JsonResponse({"success": False, "message": str(exc), "data": None}, status=400)
     except Exception as exc:  # noqa: BLE001

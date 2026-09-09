@@ -10,6 +10,7 @@ venv/
 # Django
 *.sqlite3
 staticfiles/
+training_logs/
 
 # 模型檔案（訓練後產出，通常另外用版本管理工具存放）
 *.pkl
